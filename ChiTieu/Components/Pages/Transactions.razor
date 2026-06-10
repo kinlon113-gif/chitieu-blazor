@@ -1,0 +1,385 @@
+@page "/transactions"
+@page "/transactions/add"
+@attribute [Authorize]
+@inject TransactionService TxService
+@inject GroupService GroupService
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+@using ChiTieu.Services
+@using Microsoft.AspNetCore.Authorization
+
+<PageTitle>Giao dịch - Chi Tiêu</PageTitle>
+
+<div class="fade-in">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Giao dịch</h1>
+            <div class="page-sub">@(ActiveGroup?.Name ?? "Chưa có nhóm") · Tháng @FilterMonth</div>
+        </div>
+        <button class="btn btn-primary" @onclick="OpenAdd" disabled="@(ActiveGroup == null)">+ Thêm</button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(PageMessage))
+    {
+        <div class="alert @(PageMessageIsError ? "alert-danger" : "alert-success")">@PageMessage</div>
+    }
+
+    @if (ActiveGroup == null)
+    {
+        <div class="empty-state card" style="padding:48px">
+            <div style="font-size:52px">👥</div>
+            <h3>Bạn chưa có nhóm</h3>
+            <p>Tạo hoặc tham gia một nhóm trước khi thêm giao dịch.</p>
+            <a href="/groups" class="btn btn-primary">Tạo nhóm</a>
+        </div>
+    }
+    else
+    {
+        <div class="summary-bar">
+            <div class="summary-item money-in">
+                <div class="summary-label">Thu</div>
+                <div class="summary-value positive">+@Money(Income)</div>
+            </div>
+            <div class="summary-item money-out">
+                <div class="summary-label">Chi</div>
+                <div class="summary-value negative">-@Money(Expense)</div>
+            </div>
+            <div class="summary-item money-balance">
+                <div class="summary-label">Số dư</div>
+                <div class="summary-value">@Money(Income - Expense)</div>
+            </div>
+        </div>
+
+        <div class="card filter-bar">
+            <input class="input" style="flex:1;min-width:180px" placeholder="Tìm theo ghi chú hoặc thành viên..."
+                   @bind="SearchText" @bind:event="oninput" @onkeyup="ApplyFilter" />
+            <select class="input" style="width:130px" @bind="TypeFilter" @bind:after="ApplyFilter">
+                <option value="">Tất cả</option>
+                <option value="income">Thu</option>
+                <option value="expense">Chi</option>
+            </select>
+            <input type="month" class="input" style="width:160px" value="@MonthKey" @onchange="OnMonthChanged" />
+        </div>
+
+        <div class="card" style="overflow:hidden">
+            @if (!Filtered.Any())
+            {
+                <div class="empty-state">
+                    <div style="font-size:40px">🔍</div>
+                    <h3>Chưa có giao dịch phù hợp</h3>
+                    <p>Thêm giao dịch mới hoặc đổi bộ lọc đang dùng.</p>
+                </div>
+            }
+            @foreach (var tx in Filtered)
+            {
+                <div class="tx-row">
+                    <div class="tx-icon">@GetCategoryIcon(tx.Category)</div>
+                    <div class="tx-info">
+                        <div class="tx-note">@(string.IsNullOrWhiteSpace(tx.Note) ? GetCategoryLabel(tx.Category) : tx.Note)</div>
+                        <div class="tx-meta">
+                            @(tx.User?.DisplayName ?? tx.User?.Email ?? "Ẩn danh") · @tx.Date.ToString("dd/MM/yyyy")
+                            @if (tx.IsShared) { <span class="badge badge-blue">Chung</span> }
+                            @if (tx.FromEmail) { <span class="badge badge-gray">VCB</span> }
+                        </div>
+                    </div>
+                    <div class="tx-amount @(tx.Type == "income" ? "positive" : "negative")">
+                        @(tx.Type == "income" ? "+" : "-")@Money(tx.Amount)
+                    </div>
+                    @if (tx.UserId == UserId)
+                    {
+                        <button class="btn btn-ghost btn-sm" title="Xóa" @onclick="() => DeleteTx(tx.Id)">×</button>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@if (ShowAdd)
+{
+    <div class="modal-overlay" @onclick="CloseAdd">
+        <div class="modal-sheet" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h2>Thêm giao dịch</h2>
+                <button class="btn btn-ghost btn-sm" @onclick="CloseAdd">×</button>
+            </div>
+
+            <div class="type-toggle">
+                <button class="@(NewType == "expense" ? "active" : "")" @onclick='() => SetType("expense")'>Chi tiêu</button>
+                <button class="@(NewType == "income" ? "active" : "")" @onclick='() => SetType("income")'>Thu nhập</button>
+            </div>
+
+            <div class="input-group">
+                <label class="input-label">Số tiền</label>
+                <input class="input amount-input" placeholder="500000, 500k, 1.2m"
+                       @bind="NewAmountStr" @bind:event="oninput" inputmode="decimal" />
+            </div>
+
+            <div class="input-group">
+                <label class="input-label">Danh mục</label>
+                <div class="category-grid">
+                    @foreach (var cat in GetCategories())
+                    {
+                        <button class="cat-btn @(NewCategory == cat.Id ? "selected" : "")" @onclick="() => NewCategory = cat.Id">
+                            <span>@cat.Icon</span>
+                            <span>@cat.Label</span>
+                        </button>
+                    }
+                </div>
+            </div>
+
+            <div class="input-group">
+                <label class="input-label">Ghi chú</label>
+                <input class="input" placeholder="Ví dụ: cơm trưa, tiền nhà, lương tháng..."
+                       @bind="NewNote" @bind:event="oninput" @onkeyup="AutoClassify" />
+            </div>
+
+            <div class="input-group">
+                <label class="input-label">Ngày</label>
+                <input class="input" type="date" @bind="NewDate" />
+            </div>
+
+            @if (NewType == "expense")
+            {
+                <label class="toggle-row">
+                    <div class="toggle @(NewIsShared ? "on" : "")" @onclick="() => NewIsShared = !NewIsShared">
+                        <div class="toggle-thumb"></div>
+                    </div>
+                    <span>Chi phí chung</span>
+                </label>
+            }
+
+            @if (!string.IsNullOrEmpty(FormError))
+            {
+                <div class="alert alert-danger">@FormError</div>
+            }
+
+            <button class="btn btn-primary btn-block btn-lg" @onclick="SaveTransaction" disabled="@Saving">
+                @(Saving ? "Đang lưu..." : "Lưu giao dịch")
+            </button>
+        </div>
+    </div>
+}
+
+@code {
+    private Group? ActiveGroup;
+    private List<Transaction> TransactionList = new();
+    private List<Transaction> Filtered = new();
+    private decimal Income, Expense;
+    private string UserId = "";
+    private string MonthKey = DateTime.Now.ToString("yyyy-MM");
+    private string FilterMonth => DateTime.ParseExact(MonthKey, "yyyy-MM", null).ToString("MM/yyyy");
+    private string SearchText = "";
+    private string TypeFilter = "";
+    private bool ShowAdd;
+    private string NewType = "expense";
+    private string NewAmountStr = "";
+    private string NewCategory = "food";
+    private string NewNote = "";
+    private DateTime NewDate = DateTime.Today;
+    private bool NewIsShared;
+    private bool Saving;
+    private string FormError = "";
+    private string PageMessage = "";
+    private bool PageMessageIsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        UserId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        var groups = await GroupService.GetUserGroupsAsync(UserId);
+        ActiveGroup = groups.FirstOrDefault();
+
+        if (Nav.Uri.Contains("/add")) ShowAdd = ActiveGroup != null;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (ActiveGroup == null) return;
+
+        TransactionList = await TxService.GetByGroupMonthAsync(ActiveGroup.Id, MonthKey);
+        Income = TransactionList.Where(t => t.Type == "income").Sum(t => t.Amount);
+        Expense = TransactionList.Where(t => t.Type == "expense").Sum(t => t.Amount);
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        Filtered = TransactionList.Where(t =>
+            (string.IsNullOrEmpty(TypeFilter) || t.Type == TypeFilter) &&
+            (string.IsNullOrEmpty(SearchText) ||
+             (t.Note ?? "").Contains(SearchText, StringComparison.OrdinalIgnoreCase) ||
+             (t.User?.DisplayName ?? "").Contains(SearchText, StringComparison.OrdinalIgnoreCase))
+        ).ToList();
+    }
+
+    private async Task OnMonthChanged(ChangeEventArgs e)
+    {
+        MonthKey = e.Value?.ToString() ?? DateTime.Now.ToString("yyyy-MM");
+        await LoadAsync();
+    }
+
+    private void OpenAdd()
+    {
+        PageMessage = "";
+        if (ActiveGroup == null)
+        {
+            PageMessage = "Bạn cần tạo hoặc tham gia nhóm trước khi thêm giao dịch.";
+            PageMessageIsError = true;
+            return;
+        }
+        ShowAdd = true;
+    }
+
+    private void CloseAdd()
+    {
+        ShowAdd = false;
+        FormError = "";
+    }
+
+    private void SetType(string type)
+    {
+        NewType = type;
+        NewCategory = type == "expense" ? "food" : "salary";
+    }
+
+    private void AutoClassify()
+    {
+        if (NewType != "expense" || string.IsNullOrWhiteSpace(NewNote)) return;
+        var lower = NewNote.ToLowerInvariant();
+        if (lower.Contains("cơm") || lower.Contains("com") || lower.Contains("ăn") || lower.Contains("an") || lower.Contains("bún") || lower.Contains("pho"))
+            NewCategory = "food";
+        else if (lower.Contains("xăng") || lower.Contains("xang") || lower.Contains("grab") || lower.Contains("xe"))
+            NewCategory = "transport";
+        else if (lower.Contains("nhà") || lower.Contains("nha") || lower.Contains("thuê") || lower.Contains("thue"))
+            NewCategory = "rent";
+        else if (lower.Contains("điện") || lower.Contains("dien") || lower.Contains("nước") || lower.Contains("nuoc"))
+            NewCategory = "utilities";
+        else if (lower.Contains("internet") || lower.Contains("wifi") || lower.Contains("viettel"))
+            NewCategory = "internet";
+    }
+
+    private async Task SaveTransaction()
+    {
+        FormError = "";
+        if (ActiveGroup == null)
+        {
+            FormError = "Bạn cần tạo nhóm trước khi thêm giao dịch.";
+            return;
+        }
+
+        var amount = ParseAmount(NewAmountStr);
+        if (amount <= 0)
+        {
+            FormError = "Số tiền chưa hợp lệ.";
+            return;
+        }
+
+        try
+        {
+            Saving = true;
+            await TxService.AddAsync(new Transaction
+            {
+                GroupId = ActiveGroup.Id,
+                UserId = UserId,
+                Type = NewType,
+                Amount = amount,
+                Category = NewCategory,
+                Note = NewNote.Trim(),
+                IsShared = NewIsShared && NewType == "expense",
+                Date = DateTime.SpecifyKind(NewDate.Date, DateTimeKind.Utc),
+            });
+
+            ShowAdd = false;
+            NewAmountStr = "";
+            NewNote = "";
+            NewIsShared = false;
+            PageMessage = "Đã lưu giao dịch.";
+            PageMessageIsError = false;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            FormError = $"Không lưu được giao dịch: {ex.Message}";
+        }
+        finally
+        {
+            Saving = false;
+        }
+    }
+
+    private async Task DeleteTx(int id)
+    {
+        await TxService.DeleteAsync(id, UserId);
+        await LoadAsync();
+    }
+
+    private record CatOption(string Id, string Icon, string Label);
+
+    private List<CatOption> GetCategories() => NewType == "expense"
+        ? new()
+        {
+            new("food", "🍚", "Ăn uống"), new("transport", "⛽", "Di chuyển"),
+            new("rent", "🏠", "Tiền nhà"), new("utilities", "💡", "Điện nước"),
+            new("internet", "📶", "Internet"), new("supermarket", "🛒", "Siêu thị"),
+            new("shopping", "🛍️", "Mua sắm"), new("entertainment", "🎮", "Giải trí"),
+            new("health", "🏥", "Y tế"), new("education", "📚", "Học tập"),
+            new("travel", "✈️", "Du lịch"), new("other", "📦", "Khác"),
+        }
+        : new()
+        {
+            new("salary", "💼", "Lương"), new("bonus", "🎁", "Thưởng"),
+            new("freelance", "💻", "Làm thêm"), new("investment", "📈", "Đầu tư"),
+            new("other", "💰", "Khác"),
+        };
+
+    private static string GetCategoryIcon(string category) => category switch
+    {
+        "food" => "🍚", "transport" => "⛽", "rent" => "🏠",
+        "utilities" => "💡", "internet" => "📶", "supermarket" => "🛒",
+        "shopping" => "🛍️", "entertainment" => "🎮", "health" => "🏥",
+        "education" => "📚", "travel" => "✈️", "salary" => "💼",
+        "bonus" => "🎁", "freelance" => "💻", "investment" => "📈",
+        _ => "📦",
+    };
+
+    private static string GetCategoryLabel(string category) => category switch
+    {
+        "food" => "Ăn uống", "transport" => "Di chuyển", "rent" => "Tiền nhà",
+        "utilities" => "Điện nước", "internet" => "Internet", "supermarket" => "Siêu thị",
+        "shopping" => "Mua sắm", "entertainment" => "Giải trí", "health" => "Y tế",
+        "education" => "Học tập", "travel" => "Du lịch", "salary" => "Lương",
+        "bonus" => "Thưởng", "freelance" => "Làm thêm", "investment" => "Đầu tư",
+        _ => "Khác",
+    };
+
+    private static string Money(decimal value) => $"{value:N0}đ";
+
+    private static decimal ParseAmount(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return 0;
+
+        var normalized = input.Trim().ToLowerInvariant()
+            .Replace("vnd", "")
+            .Replace("đ", "")
+            .Replace(",", "")
+            .Replace(" ", "");
+
+        var multiplier = 1m;
+        if (normalized.EndsWith("k"))
+        {
+            multiplier = 1_000m;
+            normalized = normalized[..^1];
+        }
+        else if (normalized.EndsWith("m"))
+        {
+            multiplier = 1_000_000m;
+            normalized = normalized[..^1];
+        }
+
+        return decimal.TryParse(normalized, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var value)
+            ? value * multiplier
+            : 0;
+    }
+}

@@ -1,0 +1,68 @@
+@inherits LayoutComponentBase
+
+<MudLayout>
+    <MudAppBar Elevation="0" Dense="true" Class="app-topbar">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="ToggleDrawer" />
+        <MudText Typo="Typo.h6" Class="font-display">Chi Tiêu</MudText>
+        <MudSpacer />
+        <MudButton Href="/transactions/add" Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Class="rounded-lg">
+            Thêm giao dịch
+        </MudButton>
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen" Variant="DrawerVariant.Responsive" Elevation="0" Class="app-drawer">
+        <div class="drawer-brand">
+            <div class="drawer-logo">₫</div>
+            <div>
+                <MudText Typo="Typo.h6" Class="drawer-title">Chi Tiêu</MudText>
+                <MudText Typo="Typo.caption" Class="drawer-subtitle">Quản lý tài chính nhóm</MudText>
+            </div>
+        </div>
+
+        <MudNavMenu Rounded="true" Margin="Margin.Dense" Color="Color.Primary" Class="px-3">
+            <MudNavLink Href="/dashboard" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Dashboard">Tổng quan</MudNavLink>
+            <MudNavLink Href="/transactions" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.ReceiptLong">Giao dịch</MudNavLink>
+            <MudNavLink Href="/split" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.CallSplit">Chia tiền</MudNavLink>
+            <MudNavLink Href="/debts" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Balance">Công nợ</MudNavLink>
+            <MudNavLink Href="/budget" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Savings">Ngân sách</MudNavLink>
+            <MudNavLink Href="/reports" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Insights">Báo cáo</MudNavLink>
+            <MudNavLink Href="/fund" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.AccountBalanceWallet">Quỹ chung</MudNavLink>
+            <MudNavLink Href="/groups" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Group">Nhóm</MudNavLink>
+            <MudDivider Class="my-3" />
+            <MudNavLink Href="/settings" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Settings">Cài đặt</MudNavLink>
+        </MudNavMenu>
+
+        <MudSpacer />
+        <AuthorizeView>
+            <Authorized>
+                <div class="drawer-user">
+                    <MudAvatar Color="Color.Primary" Variant="Variant.Filled">@UserInitial(context.User.Identity?.Name)</MudAvatar>
+                    <div class="min-w-0">
+                        <MudText Typo="Typo.body2" Class="drawer-user-name">@context.User.Identity?.Name</MudText>
+                        <MudText Typo="Typo.caption" Class="drawer-subtitle">@context.User.FindFirst("email")?.Value</MudText>
+                    </div>
+                </div>
+                <form method="post" action="/account/logout" class="px-4 pb-4">
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Color="Color.Inherit" StartIcon="@Icons.Material.Filled.Logout" FullWidth="true">
+                        Đăng xuất
+                    </MudButton>
+                </form>
+            </Authorized>
+        </AuthorizeView>
+    </MudDrawer>
+
+    <MudMainContent Class="app-main">
+        <MudContainer MaxWidth="MaxWidth.False" Class="app-container">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private bool _drawerOpen = true;
+
+    private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
+
+    private static string UserInitial(string? value)
+        => string.IsNullOrWhiteSpace(value) ? "?" : value[..1].ToUpperInvariant();
+}

@@ -1,0 +1,88 @@
+@page "/settings"
+@attribute [Authorize]
+@inject AppDbContext Db
+@inject GroupService GroupService
+@inject AuthenticationStateProvider AuthState
+@using ChiTieu.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Cài đặt - Chi Tiêu</PageTitle>
+
+<div class="fade-in">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Cài đặt</h1>
+            <div class="page-sub">Kết nối email VCB và tùy chọn nhóm</div>
+        </div>
+    </div>
+
+    @if (ActiveGroup == null)
+    {
+        <EmptyGroup />
+    }
+    else
+    {
+        <div class="card panel">
+            <div class="card-header">
+                <h2 class="card-title">Kết nối Gmail nhận email VCB</h2>
+            </div>
+            <div class="input-group">
+                <label class="input-label">Gmail</label>
+                <input class="input" type="email" @bind="GmailAddress" />
+            </div>
+            <div class="input-group" style="margin-top:12px">
+                <label class="input-label">App Password</label>
+                <input class="input" type="password" @bind="GmailAppPassword" />
+            </div>
+            <label class="toggle-row" style="margin-top:14px">
+                <div class="toggle @(IsActive ? "on" : "")" @onclick="() => IsActive = !IsActive"><div class="toggle-thumb"></div></div>
+                <span>Tự động đọc email mỗi 15 phút</span>
+            </label>
+            @if (!string.IsNullOrEmpty(Message))
+            {
+                <div class="alert alert-success" style="margin-top:12px">@Message</div>
+            }
+            <button class="btn btn-primary" style="margin-top:14px" @onclick="Save">Lưu cài đặt</button>
+        </div>
+    }
+</div>
+
+@code {
+    private Group? ActiveGroup;
+    private UserEmailConfig? Config;
+    private string UserId = "";
+    private string GmailAddress = "";
+    private string GmailAppPassword = "";
+    private bool IsActive = true;
+    private string Message = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        UserId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        ActiveGroup = (await GroupService.GetUserGroupsAsync(UserId)).FirstOrDefault();
+        if (ActiveGroup == null) return;
+
+        Config = await Db.UserEmailConfigs.FirstOrDefaultAsync(c => c.UserId == UserId && c.GroupId == ActiveGroup.Id);
+        if (Config != null)
+        {
+            GmailAddress = Config.GmailAddress;
+            GmailAppPassword = Config.GmailAppPassword;
+            IsActive = Config.IsActive;
+        }
+    }
+
+    private async Task Save()
+    {
+        if (ActiveGroup == null) return;
+        Config ??= new UserEmailConfig { UserId = UserId, GroupId = ActiveGroup.Id };
+        Config.GmailAddress = GmailAddress.Trim();
+        Config.GmailAppPassword = GmailAppPassword.Trim();
+        Config.IsActive = IsActive;
+        if (Config.Id == 0) Db.UserEmailConfigs.Add(Config);
+        await Db.SaveChangesAsync();
+        Message = "Đã lưu cài đặt email.";
+    }
+}
+

@@ -1,0 +1,72 @@
+@page "/debts"
+@attribute [Authorize]
+@inject GroupService GroupService
+@inject DebtService DebtService
+@inject AuthenticationStateProvider AuthState
+@using ChiTieu.Services
+@using Microsoft.AspNetCore.Authorization
+
+<PageTitle>Công nợ - Chi Tiêu</PageTitle>
+
+<div class="fade-in">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Công nợ</h1>
+            <div class="page-sub">Theo dõi các khoản cần hoàn lại trong nhóm</div>
+        </div>
+    </div>
+
+    @if (ActiveGroup == null)
+    {
+        <EmptyGroup />
+    }
+    else if (!DebtList.Any())
+    {
+        <div class="empty-state card"><div>⚖️</div><h3>Chưa có công nợ</h3><p>Các khoản chia tiền chưa thanh toán sẽ xuất hiện ở đây.</p></div>
+    }
+    else
+    {
+        <div class="card" style="overflow:hidden">
+            @foreach (var debt in DebtList)
+            {
+                <div class="tx-row">
+                    <div class="tx-icon">⚖️</div>
+                    <div class="tx-info">
+                        <div class="tx-note">@(debt.Debtor?.DisplayName ?? debt.DebtorId) trả @(debt.Creditor?.DisplayName ?? debt.CreditorId)</div>
+                        <div class="tx-meta">@debt.Note · @debt.CreatedAt.ToString("dd/MM/yyyy")</div>
+                    </div>
+                    <div class="tx-amount negative">@Money(debt.Amount)</div>
+                    <button class="btn btn-secondary btn-sm" @onclick="() => Settle(debt.Id)">Đã trả</button>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private Group? ActiveGroup;
+    private List<Debt> DebtList = new();
+    private string UserId = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        UserId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        ActiveGroup = (await GroupService.GetUserGroupsAsync(UserId)).FirstOrDefault();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (ActiveGroup == null) return;
+        DebtList = await DebtService.GetGroupDebtsAsync(ActiveGroup.Id);
+    }
+
+    private async Task Settle(int id)
+    {
+        await DebtService.SettleAsync(id, UserId);
+        await LoadAsync();
+    }
+
+    private static string Money(decimal value) => $"{value:N0}đ";
+}

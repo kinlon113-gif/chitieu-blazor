@@ -1,0 +1,214 @@
+@* Components/Pages/Groups.razor *@
+@page "/groups"
+@attribute [Authorize]
+@inject GroupService GroupService
+@inject AuthenticationStateProvider AuthState
+@using ChiTieu.Services
+@using ChiTieu.Data.Entities
+@using Microsoft.AspNetCore.Authorization
+
+<PageTitle>Nhóm — Chi Tiêu</PageTitle>
+
+<div class="fade-in">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Nhóm chi tiêu 👥</h1>
+            <p class="page-sub">Quản lý nhóm và thành viên</p>
+        </div>
+        <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary" @onclick="() => ShowJoin = true">🔑 Nhập mã</button>
+            <button class="btn btn-primary" @onclick="() => ShowCreate = true">＋ Tạo nhóm</button>
+        </div>
+    </div>
+
+    @if (!UserGroups.Any())
+    {
+        <div class="empty-state card" style="padding:48px">
+            <div style="font-size:64px">👥</div>
+            <h3>Chưa có nhóm nào</h3>
+            <p>Tạo nhóm mới hoặc nhập mã để tham gia nhóm của bạn gái</p>
+            <button class="btn btn-primary" @onclick="() => ShowCreate = true">＋ Tạo nhóm đầu tiên</button>
+        </div>
+    }
+
+    <div class="grid-2">
+        @foreach (var g in UserGroups)
+        {
+            <div class="card group-card @(g.Id == ActiveGroupId ? "active" : "")">
+                @if (g.Id == ActiveGroupId)
+                {
+                    <span class="badge badge-blue" style="position:absolute;top:12px;right:12px">Đang dùng</span>
+                }
+                <div class="group-header">
+                    <div class="group-icon">👥</div>
+                    <div>
+                        <div class="group-name">@g.Name</div>
+                        @if (!string.IsNullOrEmpty(g.Description))
+                        {
+                            <div class="group-desc">@g.Description</div>
+                        }
+                    </div>
+                </div>
+
+                <!-- Invite code -->
+                <div class="invite-box">
+                    <div>
+                        <div style="font-size:11px;color:var(--text-3)">Mã tham gia</div>
+                        <div class="invite-code">@g.InviteCode</div>
+                    </div>
+                    <button class="btn btn-ghost btn-sm" @onclick="() => CopyCode(g.InviteCode)">📋</button>
+                </div>
+
+                <!-- Members -->
+                <div>
+                    <div style="font-size:12px;font-weight:500;color:var(--text-2);margin-bottom:8px">
+                        Thành viên (@g.Members.Count)
+                    </div>
+                    @foreach (var m in g.Members)
+                    {
+                        <div class="member-row">
+                            <div class="member-avatar">@(m.User?.DisplayName?[0] ?? '?')</div>
+                            <div class="member-name">
+                                @(m.User?.DisplayName ?? m.UserId)
+                                @if (m.UserId == UserId) { <span style="color:var(--text-3);font-size:11px"> (bạn)</span> }
+                            </div>
+                            <span style="font-size:11px;color:@(m.Role == "owner" ? "var(--warning)" : "var(--text-3)")">
+                                @(m.Role == "owner" ? "👑 Chủ" : "Thành viên")
+                            </span>
+                        </div>
+                    }
+                </div>
+
+                <div style="display:flex;gap:8px;margin-top:12px">
+                    @if (g.Id != ActiveGroupId)
+                    {
+                        <button class="btn btn-secondary btn-sm" style="flex:1"
+                                @onclick="() => ActiveGroupId = g.Id">Chọn nhóm này</button>
+                    }
+                    @if (g.OwnerId == UserId)
+                    {
+                        <button class="btn btn-danger btn-sm"
+                                @onclick="() => DeleteGroup(g.Id)">🗑️</button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-ghost btn-sm" style="color:var(--danger)"
+                                @onclick="() => LeaveGroup(g.Id)">Rời nhóm</button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+<!-- Create Modal -->
+@if (ShowCreate)
+{
+    <div class="modal-overlay" @onclick="() => ShowCreate = false">
+        <div class="modal-card" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h2>Tạo nhóm mới</h2>
+                <button class="btn btn-ghost btn-sm" @onclick="() => ShowCreate = false">✕</button>
+            </div>
+            <div class="input-group">
+                <label class="input-label">Tên nhóm *</label>
+                <input class="input" placeholder="vd: Gia đình, Cặp đôi..." @bind="NewGroupName" />
+            </div>
+            <div class="input-group">
+                <label class="input-label">Mô tả</label>
+                <input class="input" placeholder="Mô tả ngắn" @bind="NewGroupDesc" />
+            </div>
+            <div class="info-box">
+                💡 Sau khi tạo bạn sẽ nhận mã 6 ký tự để mời bạn gái tham gia
+            </div>
+            <button class="btn btn-primary btn-block" @onclick="CreateGroup" disabled="@Saving">
+                @(Saving ? "Đang tạo..." : "Tạo nhóm")
+            </button>
+        </div>
+    </div>
+}
+
+<!-- Join Modal -->
+@if (ShowJoin)
+{
+    <div class="modal-overlay" @onclick="() => ShowJoin = false">
+        <div class="modal-card" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h2>Tham gia nhóm</h2>
+                <button class="btn btn-ghost btn-sm" @onclick="() => ShowJoin = false">✕</button>
+            </div>
+            <div class="input-group">
+                <label class="input-label">Mã tham gia (6 ký tự)</label>
+                <input class="input" style="font-size:22px;letter-spacing:0.15em;text-align:center;font-weight:800"
+                       placeholder="ABC123" @bind="JoinCode" />
+                <div style="font-size:12px;color:var(--text-3)">Nhờ chủ nhóm chia sẻ mã</div>
+            </div>
+            @if (!string.IsNullOrEmpty(JoinError))
+            {
+                <div class="alert alert-danger">@JoinError</div>
+            }
+            <button class="btn btn-primary btn-block" @onclick="JoinGroup" disabled="@Saving">
+                @(Saving ? "Đang tham gia..." : "Tham gia")
+            </button>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Group> UserGroups = new();
+    private string UserId      = "";
+    private int ActiveGroupId  = 0;
+    private bool ShowCreate, ShowJoin, Saving;
+    private string NewGroupName = "", NewGroupDesc = "", JoinCode = "", JoinError = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth  = await AuthState.GetAuthenticationStateAsync();
+        UserId    = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        UserGroups = await GroupService.GetUserGroupsAsync(UserId);
+        ActiveGroupId = UserGroups.FirstOrDefault()?.Id ?? 0;
+    }
+
+    private async Task CreateGroup()
+    {
+        if (string.IsNullOrWhiteSpace(NewGroupName)) return;
+        Saving = true;
+        var g = await GroupService.CreateAsync(NewGroupName, NewGroupDesc, UserId);
+        UserGroups.Add(g);
+        ActiveGroupId = g.Id;
+        ShowCreate    = false;
+        NewGroupName = NewGroupDesc = "";
+        Saving = false;
+    }
+
+    private async Task JoinGroup()
+    {
+        if (string.IsNullOrWhiteSpace(JoinCode)) return;
+        Saving = true; JoinError = "";
+        try
+        {
+            var g = await GroupService.JoinByCodeAsync(JoinCode, UserId);
+            if (g != null) { UserGroups.Add(g); ShowJoin = false; JoinCode = ""; }
+        }
+        catch (Exception ex) { JoinError = ex.Message; }
+        finally { Saving = false; }
+    }
+
+    private async Task LeaveGroup(int id)
+    {
+        await GroupService.LeaveAsync(id, UserId);
+        UserGroups = await GroupService.GetUserGroupsAsync(UserId);
+    }
+
+    private async Task DeleteGroup(int id)
+    {
+        await GroupService.DeleteAsync(id, UserId);
+        UserGroups = await GroupService.GetUserGroupsAsync(UserId);
+    }
+
+    private async Task CopyCode(string code)
+    {
+        // JS interop để copy
+        await Task.CompletedTask;
+    }
+}

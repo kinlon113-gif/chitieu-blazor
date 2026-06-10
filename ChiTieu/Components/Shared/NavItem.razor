@@ -1,0 +1,15 @@
+@* Components/Shared/NavItem.razor *@
+@inject NavigationManager Nav
+
+<a href="@Href" class="nav-item @(IsActive ? "active" : "")">
+    <span class="nav-icon">@Icon</span>
+    <span>@Label</span>
+</a>
+
+@code {
+    [Parameter] public string Href  { get; set; } = "";
+    [Parameter] public string Icon  { get; set; } = "";
+    [Parameter] public string Label { get; set; } = "";
+
+    private bool IsActive => Nav.Uri.Contains(Href, StringComparison.OrdinalIgnoreCase);
+}

@@ -1,0 +1,189 @@
+@page "/dashboard"
+@attribute [Authorize]
+@inject TransactionService TxService
+@inject GroupService GroupService
+@inject BudgetService BudgetService
+@inject AuthenticationStateProvider AuthState
+@using ChiTieu.Services
+@using Microsoft.AspNetCore.Authorization
+
+<PageTitle>Tổng quan - Chi Tiêu</PageTitle>
+
+<div class="fade-in">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Tổng quan</h1>
+            <div class="page-sub">@(ActiveGroup?.Name ?? "Chưa có nhóm") · Tháng @CurrentMonth</div>
+        </div>
+        <a href="/transactions/add" class="btn btn-primary">+ Thêm giao dịch</a>
+    </div>
+
+    @if (ActiveGroup == null)
+    {
+        <div class="empty-state card" style="padding:48px">
+            <div style="font-size:64px">👥</div>
+            <h3>Bạn chưa có nhóm nào</h3>
+            <p>Tạo nhóm để bắt đầu quản lý chi tiêu cùng nhau.</p>
+            <a href="/groups" class="btn btn-primary">Tạo nhóm đầu tiên</a>
+        </div>
+    }
+    else
+    {
+        @foreach (var warn in BudgetWarnings)
+        {
+            <div class="alert alert-warning">
+                <strong>@GetCategoryLabel(warn.CategoryId)</strong> đã dùng @warn.UsedPercent% ngân sách
+                (@Money(warn.Spent) / @Money(warn.Budget.Amount))
+            </div>
+        }
+
+        <div class="grid-4" style="margin-bottom:24px">
+            <div class="stat-card">
+                <div class="stat-label">Tổng thu</div>
+                <div class="stat-icon money-in">↗</div>
+                <div class="stat-value positive">+@Money(Income)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Tổng chi</div>
+                <div class="stat-icon money-out">↘</div>
+                <div class="stat-value negative">-@Money(Expense)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Số dư</div>
+                <div class="stat-icon money-balance">=</div>
+                <div class="stat-value @(Balance >= 0 ? "positive" : "negative")">@Money(Balance)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Thành viên</div>
+                <div class="stat-icon neutral">👥</div>
+                <div class="stat-value">@(ActiveGroup?.Members?.Count ?? 0)</div>
+            </div>
+        </div>
+
+        <div class="dashboard-grid">
+            <div class="card panel">
+                <div class="card-header">
+                    <h2 class="card-title">Giao dịch gần đây</h2>
+                    <a href="/transactions" class="link-more">Xem tất cả →</a>
+                </div>
+
+                @if (!RecentTxs.Any())
+                {
+                    <div class="empty-state compact">
+                        <div>💸</div>
+                        <h3>Chưa có giao dịch</h3>
+                        <p>Thêm thủ công hoặc kết nối email VCB để tự động nhập.</p>
+                        <a href="/transactions/add" class="btn btn-primary btn-sm">Thêm giao dịch</a>
+                    </div>
+                }
+                else
+                {
+                    @foreach (var tx in RecentTxs)
+                    {
+                        <div class="tx-row">
+                            <div class="tx-icon">@GetCategoryIcon(tx.Category)</div>
+                            <div class="tx-info">
+                                <div class="tx-note">@(string.IsNullOrWhiteSpace(tx.Note) ? GetCategoryLabel(tx.Category) : tx.Note)</div>
+                                <div class="tx-meta">@(tx.User?.DisplayName ?? tx.User?.Email ?? "Ẩn danh") · @tx.Date.ToString("dd/MM/yyyy")</div>
+                            </div>
+                            <div class="tx-amount @(tx.Type == "income" ? "positive" : "negative")">
+                                @(tx.Type == "income" ? "+" : "-")@Money(tx.Amount)
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+
+            <div class="card panel">
+                <div class="card-header">
+                    <h2 class="card-title">Chi theo danh mục</h2>
+                    <a href="/reports" class="link-more">Báo cáo →</a>
+                </div>
+
+                @if (!CategorySpending.Any())
+                {
+                    <div class="empty-state compact">
+                        <div>📊</div>
+                        <h3>Chưa có dữ liệu</h3>
+                        <p>Các khoản chi sẽ xuất hiện ở đây.</p>
+                    </div>
+                }
+                else
+                {
+                    @foreach (var item in CategorySpending.Take(6))
+                    {
+                        var percent = Expense > 0 ? Math.Min(100, (int)(item.Value / Expense * 100)) : 0;
+                        <div class="bar-row">
+                            <div class="bar-top">
+                                <span>@GetCategoryIcon(item.Key) @GetCategoryLabel(item.Key)</span>
+                                <strong>@Money(item.Value)</strong>
+                            </div>
+                            <div class="bar-track"><div class="bar-fill" style="width:@percent%"></div></div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private Group? ActiveGroup;
+    private List<Transaction> RecentTxs = new();
+    private List<(ChiTieu.Data.Entities.Budget Budget, decimal Spent, int UsedPercent, string CategoryId)> BudgetWarnings = new();
+    private Dictionary<string, decimal> CategorySpending = new();
+    private decimal Income, Expense, Balance;
+    private string CurrentMonth = DateTime.Now.ToString("MM/yyyy");
+    private string MonthKey = DateTime.Now.ToString("yyyy-MM");
+    private string UserId = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        UserId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        var groups = await GroupService.GetUserGroupsAsync(UserId);
+        ActiveGroup = groups.FirstOrDefault();
+
+        if (ActiveGroup == null) return;
+
+        var txs = await TxService.GetByGroupMonthAsync(ActiveGroup.Id, MonthKey);
+        RecentTxs = txs.Take(8).ToList();
+        Income = txs.Where(t => t.Type == "income").Sum(t => t.Amount);
+        Expense = txs.Where(t => t.Type == "expense").Sum(t => t.Amount);
+        Balance = Income - Expense;
+        CategorySpending = await TxService.GetExpenseByCategoryAsync(ActiveGroup.Id, MonthKey);
+
+        var budgets = await BudgetService.GetByGroupMonthAsync(ActiveGroup.Id, MonthKey);
+        BudgetWarnings = budgets
+            .Select(b =>
+            {
+                var spent = CategorySpending.GetValueOrDefault(b.CategoryId, 0);
+                var percent = b.Amount > 0 ? (int)(spent / b.Amount * 100) : 0;
+                return (b, spent, percent, b.CategoryId);
+            })
+            .Where(x => x.percent >= 80)
+            .ToList();
+    }
+
+    private static string Money(decimal value) => $"{value:N0}đ";
+
+    private static string GetCategoryIcon(string category) => category switch
+    {
+        "food" => "🍚", "transport" => "⛽", "rent" => "🏠",
+        "utilities" => "💡", "internet" => "📶", "supermarket" => "🛒",
+        "shopping" => "🛍️", "entertainment" => "🎮", "health" => "🏥",
+        "education" => "📚", "travel" => "✈️", "salary" => "💼",
+        "bonus" => "🎁", "freelance" => "💻", "investment" => "📈",
+        _ => "📦",
+    };
+
+    private static string GetCategoryLabel(string category) => category switch
+    {
+        "food" => "Ăn uống", "transport" => "Di chuyển", "rent" => "Tiền nhà",
+        "utilities" => "Điện nước", "internet" => "Internet", "supermarket" => "Siêu thị",
+        "shopping" => "Mua sắm", "entertainment" => "Giải trí", "health" => "Y tế",
+        "education" => "Học tập", "travel" => "Du lịch", "salary" => "Lương",
+        "bonus" => "Thưởng", "freelance" => "Làm thêm", "investment" => "Đầu tư",
+        _ => "Khác",
+    };
+}

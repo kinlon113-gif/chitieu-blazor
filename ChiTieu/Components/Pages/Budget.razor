@@ -1,0 +1,158 @@
+@page "/budget"
+@attribute [Authorize]
+@inject GroupService GroupService
+@inject BudgetService BudgetService
+@inject TransactionService TxService
+@inject AuthenticationStateProvider AuthState
+@using ChiTieu.Services
+@using Microsoft.AspNetCore.Authorization
+
+<PageTitle>Ngân sách - Chi Tiêu</PageTitle>
+
+<div class="fade-in">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Ngân sách</h1>
+            <div class="page-sub">Theo dõi giới hạn chi tiêu tháng @MonthKey</div>
+        </div>
+    </div>
+
+    @if (ActiveGroup == null)
+    {
+        <EmptyGroup />
+    }
+    else
+    {
+        <div class="card panel" style="margin-bottom:16px">
+            <div class="quick-form">
+                <select class="input" @bind="CategoryId">
+                    @foreach (var cat in Categories)
+                    {
+                        <option value="@cat.Id">@cat.Icon @cat.Label</option>
+                    }
+                </select>
+                <input class="input" type="month" value="@MonthKey" @onchange="OnMonthChanged" />
+                <input class="input" placeholder="Số tiền, ví dụ 3m" @bind="AmountText" />
+                <button class="btn btn-primary" @onclick="SaveBudget" disabled="@Saving">Lưu</button>
+            </div>
+            @if (!string.IsNullOrEmpty(Message))
+            {
+                <div class="alert @(IsError ? "alert-danger" : "alert-success")" style="margin-top:12px">@Message</div>
+            }
+        </div>
+
+        <div class="grid-2">
+            @foreach (var b in Budgets)
+            {
+                var spent = Spending.GetValueOrDefault(b.CategoryId, 0);
+                var percent = b.Amount > 0 ? Math.Min(100, (int)(spent / b.Amount * 100)) : 0;
+                <div class="card panel">
+                    <div class="card-header">
+                        <h2 class="card-title">@Icon(b.CategoryId) @Label(b.CategoryId)</h2>
+                        <button class="btn btn-ghost btn-sm" @onclick="() => DeleteBudget(b.Id)">Xóa</button>
+                    </div>
+                    <div class="budget-line">
+                        <span>@Money(spent)</span>
+                        <strong>@Money(b.Amount)</strong>
+                    </div>
+                    <div class="bar-track"><div class="bar-fill @(percent >= 90 ? "danger-fill" : percent >= 75 ? "warning-fill" : "")" style="width:@percent%"></div></div>
+                    <div class="page-sub" style="margin-top:8px">Đã dùng @percent%</div>
+                </div>
+            }
+        </div>
+
+        @if (!Budgets.Any())
+        {
+            <div class="empty-state card">
+                <div>🎯</div>
+                <h3>Chưa có ngân sách</h3>
+                <p>Đặt giới hạn theo danh mục để app cảnh báo khi gần vượt mức.</p>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private Group? ActiveGroup;
+    private List<ChiTieu.Data.Entities.Budget> Budgets = new();
+    private Dictionary<string, decimal> Spending = new();
+    private string UserId = "";
+    private string MonthKey = DateTime.Now.ToString("yyyy-MM");
+    private string CategoryId = "food";
+    private string AmountText = "";
+    private string Message = "";
+    private bool IsError;
+    private bool Saving;
+
+    private readonly List<CategoryItem> Categories = new()
+    {
+        new("food", "🍚", "Ăn uống"), new("transport", "⛽", "Di chuyển"),
+        new("rent", "🏠", "Tiền nhà"), new("utilities", "💡", "Điện nước"),
+        new("internet", "📶", "Internet"), new("supermarket", "🛒", "Siêu thị"),
+        new("shopping", "🛍️", "Mua sắm"), new("entertainment", "🎮", "Giải trí"),
+        new("health", "🏥", "Y tế"), new("education", "📚", "Học tập"),
+        new("travel", "✈️", "Du lịch"), new("other", "📦", "Khác"),
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        UserId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        ActiveGroup = (await GroupService.GetUserGroupsAsync(UserId)).FirstOrDefault();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (ActiveGroup == null) return;
+        Budgets = await BudgetService.GetByGroupMonthAsync(ActiveGroup.Id, MonthKey);
+        Spending = await TxService.GetExpenseByCategoryAsync(ActiveGroup.Id, MonthKey);
+    }
+
+    private async Task OnMonthChanged(ChangeEventArgs e)
+    {
+        MonthKey = e.Value?.ToString() ?? DateTime.Now.ToString("yyyy-MM");
+        await LoadAsync();
+    }
+
+    private async Task SaveBudget()
+    {
+        Message = "";
+        var amount = ParseAmount(AmountText);
+        if (ActiveGroup == null || amount <= 0)
+        {
+            Message = "Số tiền ngân sách chưa hợp lệ.";
+            IsError = true;
+            return;
+        }
+
+        Saving = true;
+        await BudgetService.SetAsync(ActiveGroup.Id, CategoryId, MonthKey, amount);
+        AmountText = "";
+        Message = "Đã lưu ngân sách.";
+        IsError = false;
+        Saving = false;
+        await LoadAsync();
+    }
+
+    private async Task DeleteBudget(int id)
+    {
+        await BudgetService.DeleteAsync(id);
+        await LoadAsync();
+    }
+
+    private string Icon(string id) => Categories.FirstOrDefault(c => c.Id == id)?.Icon ?? "📦";
+    private string Label(string id) => Categories.FirstOrDefault(c => c.Id == id)?.Label ?? "Khác";
+    private static string Money(decimal value) => $"{value:N0}đ";
+    private record CategoryItem(string Id, string Icon, string Label);
+
+    private static decimal ParseAmount(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return 0;
+        var normalized = input.Trim().ToLowerInvariant().Replace("vnd", "").Replace("đ", "").Replace(",", "").Replace(" ", "");
+        var multiplier = 1m;
+        if (normalized.EndsWith("k")) { multiplier = 1_000m; normalized = normalized[..^1]; }
+        else if (normalized.EndsWith("m")) { multiplier = 1_000_000m; normalized = normalized[..^1]; }
+        return decimal.TryParse(normalized, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var value) ? value * multiplier : 0;
+    }
+}

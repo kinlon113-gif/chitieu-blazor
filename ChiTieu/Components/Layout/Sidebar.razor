@@ -1,0 +1,55 @@
+@* Components/Layout/Sidebar.razor *@
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+@inject SignInManager<AppUser> SignInManager
+@using Microsoft.AspNetCore.Identity
+@using ChiTieu.Data.Entities
+
+<aside class="sidebar" id="sidebar">
+    <!-- Logo -->
+    <div class="sidebar-logo">
+        <div class="logo-icon">📈</div>
+        <div>
+            <div class="logo-title">Chi Tiêu</div>
+            <div class="logo-sub">Quản lý tài chính nhóm</div>
+        </div>
+    </div>
+
+    <!-- Nav -->
+    <nav class="sidebar-nav">
+        <div class="nav-section-label">Menu</div>
+        <NavItem Href="/dashboard"     Icon="📊" Label="Tổng quan" />
+        <NavItem Href="/transactions"  Icon="💸" Label="Giao dịch" />
+        <NavItem Href="/split"         Icon="✂️"  Label="Chia tiền" />
+        <NavItem Href="/debts"         Icon="⚖️"  Label="Công nợ" />
+        <NavItem Href="/budget"        Icon="🎯"  Label="Ngân sách" />
+        <NavItem Href="/reports"       Icon="📈"  Label="Báo cáo" />
+        <NavItem Href="/fund"          Icon="💰"  Label="Quỹ chung" />
+        <NavItem Href="/groups"        Icon="👥"  Label="Nhóm" />
+
+        <div class="nav-section-label" style="margin-top:12px">Cài đặt</div>
+        <NavItem Href="/settings"      Icon="⚙️"  Label="Cài đặt" />
+    </nav>
+
+    <!-- User -->
+    <div class="sidebar-footer">
+        <AuthorizeView>
+            <Authorized>
+                <div class="user-info">
+                    <div class="user-avatar">@context.User.Identity?.Name?[0]</div>
+                    <div>
+                        <div class="user-name">@context.User.Identity?.Name</div>
+                        <div class="user-email">@context.User.FindFirst("email")?.Value</div>
+                    </div>
+                </div>
+                <form method="post" action="/account/logout">
+                    <button type="submit" class="btn btn-ghost btn-sm btn-block" style="color:rgba(255,255,255,0.4)">
+                        Đăng xuất
+                    </button>
+                </form>
+            </Authorized>
+        </AuthorizeView>
+    </div>
+</aside>
+
+@code { }

@@ -1,0 +1,121 @@
+@page "/fund"
+@attribute [Authorize]
+@inject AppDbContext Db
+@inject GroupService GroupService
+@inject AuthenticationStateProvider AuthState
+@using ChiTieu.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Quỹ chung - Chi Tiêu</PageTitle>
+
+<div class="fade-in">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Quỹ chung</h1>
+            <div class="page-sub">Theo dõi số dư quỹ của nhóm</div>
+        </div>
+    </div>
+
+    @if (ActiveGroup == null)
+    {
+        <EmptyGroup />
+    }
+    else
+    {
+        <div class="grid-2">
+            <div class="card panel">
+                <div class="stat-label">Số dư quỹ</div>
+                <div class="stat-value">@Money(SharedFundState?.Balance ?? 0)</div>
+            </div>
+            <div class="card panel">
+                <div class="quick-form">
+                    <select class="input" @bind="Type">
+                        <option value="deposit">Nạp quỹ</option>
+                        <option value="withdraw">Rút quỹ</option>
+                    </select>
+                    <input class="input" placeholder="Số tiền" @bind="AmountText" />
+                    <input class="input" placeholder="Ghi chú" @bind="Note" />
+                    <button class="btn btn-primary" @onclick="Save">Lưu</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="overflow:hidden;margin-top:16px">
+            @foreach (var tx in Transactions)
+            {
+                <div class="tx-row">
+                    <div class="tx-icon">💰</div>
+                    <div class="tx-info">
+                        <div class="tx-note">@(string.IsNullOrWhiteSpace(tx.Note) ? (tx.Type == "deposit" ? "Nạp quỹ" : "Rút quỹ") : tx.Note)</div>
+                        <div class="tx-meta">@tx.Date.ToString("dd/MM/yyyy")</div>
+                    </div>
+                    <div class="tx-amount @(tx.Type == "deposit" ? "positive" : "negative")">@(tx.Type == "deposit" ? "+" : "-")@Money(tx.Amount)</div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private Group? ActiveGroup;
+    private SharedFund? SharedFundState;
+    private List<FundTransaction> Transactions = new();
+    private string UserId = "";
+    private string Type = "deposit";
+    private string AmountText = "";
+    private string Note = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        UserId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        ActiveGroup = (await GroupService.GetUserGroupsAsync(UserId)).FirstOrDefault();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (ActiveGroup == null) return;
+        SharedFundState = await Db.SharedFunds.Include(f => f.Transactions).FirstOrDefaultAsync(f => f.GroupId == ActiveGroup.Id);
+        if (SharedFundState == null)
+        {
+            SharedFundState = new SharedFund { GroupId = ActiveGroup.Id, Name = "Quỹ chung" };
+            Db.SharedFunds.Add(SharedFundState);
+            await Db.SaveChangesAsync();
+        }
+        Transactions = await Db.FundTransactions.Where(t => t.FundId == SharedFundState.Id).OrderByDescending(t => t.Date).ToListAsync();
+    }
+
+    private async Task Save()
+    {
+        if (SharedFundState == null) return;
+        var amount = ParseAmount(AmountText);
+        if (amount <= 0) return;
+        Db.FundTransactions.Add(new FundTransaction
+        {
+            FundId = SharedFundState.Id,
+            UserId = UserId,
+            Type = Type,
+            Amount = amount,
+            Note = Note.Trim(),
+            Date = DateTime.UtcNow,
+        });
+        SharedFundState.Balance += Type == "deposit" ? amount : -amount;
+        await Db.SaveChangesAsync();
+        AmountText = "";
+        Note = "";
+        await LoadAsync();
+    }
+
+    private static string Money(decimal value) => $"{value:N0}đ";
+    private static decimal ParseAmount(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return 0;
+        var normalized = input.Trim().ToLowerInvariant().Replace("vnd", "").Replace("đ", "").Replace(",", "").Replace(" ", "");
+        var multiplier = 1m;
+        if (normalized.EndsWith("k")) { multiplier = 1_000m; normalized = normalized[..^1]; }
+        else if (normalized.EndsWith("m")) { multiplier = 1_000_000m; normalized = normalized[..^1]; }
+        return decimal.TryParse(normalized, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var value) ? value * multiplier : 0;
+    }
+}

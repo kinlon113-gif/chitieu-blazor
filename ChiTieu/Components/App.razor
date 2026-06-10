@@ -1,0 +1,56 @@
+<CascadingAuthenticationState>
+    <MudThemeProvider Theme="@AppTheme" />
+    <MudPopoverProvider />
+    <MudDialogProvider />
+    <MudSnackbarProvider />
+
+    <Router AppAssembly="@typeof(App).Assembly">
+        <Found Context="routeData">
+            <AuthorizeRouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)">
+                <NotAuthorized>
+                    <RedirectToLogin />
+                </NotAuthorized>
+            </AuthorizeRouteView>
+            <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+        </Found>
+        <NotFound>
+            <PageTitle>Không tìm thấy trang</PageTitle>
+            <LayoutView Layout="@typeof(MainLayout)">
+                <MudContainer MaxWidth="MaxWidth.Medium" Class="py-12">
+                    <MudPaper Class="pa-8 text-center" Elevation="0" Outlined="true">
+                        <MudText Typo="Typo.h3">404</MudText>
+                        <MudText Typo="Typo.body1" Color="Color.Secondary" Class="mt-2">Trang không tồn tại</MudText>
+                        <MudButton Href="/" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4">Về trang chủ</MudButton>
+                    </MudPaper>
+                </MudContainer>
+            </LayoutView>
+        </NotFound>
+    </Router>
+</CascadingAuthenticationState>
+
+@code {
+    private readonly MudTheme AppTheme = new()
+    {
+        PaletteLight = new PaletteLight
+        {
+            Primary = "#2563EB",
+            Secondary = "#14B8A6",
+            Tertiary = "#F59E0B",
+            Background = "#F6F8FC",
+            Surface = "#FFFFFF",
+            DrawerBackground = "#0F172A",
+            DrawerText = "rgba(255,255,255,.76)",
+            DrawerIcon = "rgba(255,255,255,.76)",
+            AppbarBackground = "#FFFFFF",
+            AppbarText = "#0F172A",
+            TextPrimary = "#0F172A",
+            TextSecondary = "#64748B",
+            LinesDefault = "#E2E8F0",
+        },
+        LayoutProperties = new LayoutProperties
+        {
+            DrawerWidthLeft = "280px",
+            AppbarHeight = "64px",
+        }
+    };
+}
