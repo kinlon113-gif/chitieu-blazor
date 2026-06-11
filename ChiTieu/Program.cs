@@ -13,10 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseStaticWebAssets();
 
 var port = Environment.GetEnvironmentVariable("PORT");
-if (!string.IsNullOrWhiteSpace(port))
-{
-    builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
-}
+builder.WebHost.UseUrls($"http://0.0.0.0:{(string.IsNullOrWhiteSpace(port) ? "8080" : port)}");
 
 // ─── DATABASE ──────────────────────────────────────────────────
 var connectionString =
