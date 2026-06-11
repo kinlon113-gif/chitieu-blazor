@@ -29,12 +29,12 @@ Console.WriteLine("=========================");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(
-    connectionString,
-    npgsql =>
-    {
-        npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null);
-        npgsql.CommandTimeout(120);
-    });
+        connectionString,
+        npgsql =>
+        {
+            npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null);
+            npgsql.CommandTimeout(120);
+        }));
 
 // ─── IDENTITY ─────────────────────────────────────────────────
 builder.Services.AddIdentity<AppUser, IdentityRole>(options =>
