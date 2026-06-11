@@ -89,11 +89,9 @@ try
         : "SUPABASE CONNECT FAILED: CanConnectAsync returned false");
 
     if (canConnect)
-    {
-        Console.WriteLine("Running database migration...");
-        await db.Database.MigrateAsync();
-        Console.WriteLine("DATABASE MIGRATION SUCCESS");
-    }
+{
+    Console.WriteLine("SUPABASE CONNECT OK - SKIP AUTO MIGRATION");
+}
 }
 catch (Exception ex)
 {
