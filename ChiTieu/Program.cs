@@ -98,7 +98,7 @@ try
 
     Console.WriteLine("Testing Supabase connection...");
 
-    var canConnect = await db.Database.CanConnectAsync();
+    var canConnect = false;
 
     Console.WriteLine(canConnect
         ? "SUPABASE CONNECT SUCCESS"
