@@ -5,6 +5,7 @@ using ChiTieu.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using MudBlazor.Services;
+using Npgsql;
 using System.Globalization;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -17,21 +18,29 @@ if (!string.IsNullOrWhiteSpace(port))
 }
 
 // ─── DATABASE ──────────────────────────────────────────────────
-// Dùng Supabase PostgreSQL — điền connection string vào appsettings.json
+var connectionString =
+    builder.Configuration.GetConnectionString("DefaultConnection");
+
+Console.WriteLine("==== DATABASE CONFIG ====");
+Console.WriteLine(string.IsNullOrWhiteSpace(connectionString)
+    ? "DefaultConnection is NULL or EMPTY"
+    : MaskConnectionString(connectionString));
+Console.WriteLine("=========================");
+
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(
-        builder.Configuration.GetConnectionString("DefaultConnection"),
+        connectionString,
         npgsql => npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null)));
 
 // ─── IDENTITY ─────────────────────────────────────────────────
 builder.Services.AddIdentity<AppUser, IdentityRole>(options =>
 {
-    options.Password.RequiredLength         = 6;
-    options.Password.RequireDigit           = false;
-    options.Password.RequireUppercase       = false;
-    options.Password.RequireLowercase       = false;
+    options.Password.RequiredLength = 6;
+    options.Password.RequireDigit = false;
+    options.Password.RequireUppercase = false;
+    options.Password.RequireLowercase = false;
     options.Password.RequireNonAlphanumeric = false;
-    options.SignIn.RequireConfirmedEmail     = false;
+    options.SignIn.RequireConfirmedEmail = false;
 })
 .AddEntityFrameworkStores<AppDbContext>()
 .AddDefaultTokenProviders();
@@ -50,20 +59,42 @@ builder.Services.AddScoped<BudgetService>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<VcbEmailParserService>();
 
-// Background service — tự động lấy email VCB mỗi 15 phút
-builder.Services.AddHostedService<VcbEmailBackgroundService>();
+// Tạm thời tắt background email khi deploy test DB.
+// Bật lại sau khi Supabase chạy ổn.
+// builder.Services.AddHostedService<VcbEmailBackgroundService>();
 
-// ─── CORS (nếu cần gọi API từ mobile sau này) ─────────────────
+// ─── CORS ─────────────────────────────────────────────────────
 builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
     p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
 
 var app = builder.Build();
 
-// ─── MIGRATE DATABASE KHI KHỞI ĐỘNG ──────────────────────────
-using (var scope = app.Services.CreateScope())
+// ─── TEST + MIGRATE DATABASE KHI KHỞI ĐỘNG ────────────────────
+try
 {
+    using var scope = app.Services.CreateScope();
+
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await db.Database.MigrateAsync();
+
+    Console.WriteLine("Testing Supabase connection...");
+
+    var canConnect = await db.Database.CanConnectAsync();
+
+    Console.WriteLine(canConnect
+        ? "SUPABASE CONNECT SUCCESS"
+        : "SUPABASE CONNECT FAILED: CanConnectAsync returned false");
+
+    if (canConnect)
+    {
+        Console.WriteLine("Running database migration...");
+        await db.Database.MigrateAsync();
+        Console.WriteLine("DATABASE MIGRATION SUCCESS");
+    }
+}
+catch (Exception ex)
+{
+    Console.WriteLine("SUPABASE CONNECT OR MIGRATION FAILED");
+    Console.WriteLine(ex.ToString());
 }
 
 if (args.Contains("--smoke-test", StringComparer.OrdinalIgnoreCase))
@@ -85,9 +116,9 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-// Keep local HTTP usable; production hosting can terminate HTTPS at the proxy.
 app.UseStaticFiles();
 app.UseRouting();
+app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -183,7 +214,13 @@ app.MapPost("/account/register", async (HttpContext http, UserManager<AppUser> u
     var email = form["email"].ToString();
     var password = form["password"].ToString();
     var displayName = form["displayName"].ToString();
-    var user = new AppUser { UserName = email, Email = email, DisplayName = displayName };
+
+    var user = new AppUser
+    {
+        UserName = email,
+        Email = email,
+        DisplayName = displayName
+    };
 
     var result = await userManager.CreateAsync(user, password);
     if (!result.Succeeded)
@@ -205,6 +242,25 @@ app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
 
 app.Run();
+
+static string MaskConnectionString(string connectionString)
+{
+    try
+    {
+        var csb = new NpgsqlConnectionStringBuilder(connectionString);
+
+        if (!string.IsNullOrWhiteSpace(csb.Password))
+        {
+            csb.Password = "******";
+        }
+
+        return csb.ConnectionString;
+    }
+    catch
+    {
+        return connectionString.Replace("Password=", "Password=******");
+    }
+}
 
 static async Task RunSmokeTestAsync(IServiceProvider services)
 {
@@ -341,6 +397,7 @@ static async Task CleanupSmokeUsersAsync(IServiceProvider services)
             db.Notifications.RemoveRange(db.Notifications.Where(n => n.GroupId == groupId));
             db.Budgets.RemoveRange(db.Budgets.Where(b => b.GroupId == groupId));
             db.Transactions.RemoveRange(db.Transactions.Where(t => t.GroupId == groupId));
+
             var fundIds = await db.SharedFunds.Where(f => f.GroupId == groupId).Select(f => f.Id).ToListAsync();
             db.FundTransactions.RemoveRange(db.FundTransactions.Where(t => fundIds.Contains(t.FundId)));
             db.SharedFunds.RemoveRange(db.SharedFunds.Where(f => f.GroupId == groupId));
