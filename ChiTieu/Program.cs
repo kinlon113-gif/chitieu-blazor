@@ -207,7 +207,7 @@ app.MapPost("/account/login", async (
     ILogger<Program> logger) =>
 {
     var form = await http.Request.ReadFormAsync();
-    var email = form["email"].ToString();
+    var email = form["email"].ToString().Trim();
     var password = form["password"].ToString();
     var returnUrl = form["returnUrl"].ToString();
 
@@ -276,7 +276,7 @@ app.MapPost("/account/register", async (
     ILogger<Program> logger) =>
 {
     var form = await http.Request.ReadFormAsync();
-    var email = form["email"].ToString();
+    var email = form["email"].ToString().Trim();
     var password = form["password"].ToString();
     var displayName = form["displayName"].ToString();
 
@@ -293,6 +293,41 @@ app.MapPost("/account/register", async (
         result = await userManager.CreateAsync(user, password);
         if (!result.Succeeded)
         {
+            if (result.Errors.Any(e => e.Code == nameof(IdentityErrorDescriber.DuplicateUserName) || e.Code == nameof(IdentityErrorDescriber.DuplicateEmail)))
+            {
+                var existingUser = await userManager.FindByEmailAsync(email)
+                    ?? await userManager.FindByNameAsync(email);
+
+                if (existingUser != null)
+                {
+                    existingUser.Email = email;
+                    existingUser.UserName = email;
+                    existingUser.DisplayName = string.IsNullOrWhiteSpace(displayName)
+                        ? existingUser.DisplayName
+                        : displayName;
+
+                    await userManager.UpdateAsync(existingUser);
+
+                    if (await userManager.HasPasswordAsync(existingUser))
+                    {
+                        await userManager.RemovePasswordAsync(existingUser);
+                    }
+
+                    var resetPassword = await userManager.AddPasswordAsync(existingUser, password);
+                    if (resetPassword.Succeeded)
+                    {
+                        logger.LogWarning("Reset password for existing account {Email} from register form", email);
+                        await signInManager.SignInAsync(existingUser, isPersistent: true);
+                        return Results.Redirect("/dashboard");
+                    }
+
+                    logger.LogWarning(
+                        "Reset password failed for existing account {Email}: {Errors}",
+                        email,
+                        string.Join(", ", resetPassword.Errors.Select(e => $"{e.Code}:{e.Description}")));
+                }
+            }
+
             logger.LogWarning(
                 "Register failed for {Email}: {Errors}",
                 email,
