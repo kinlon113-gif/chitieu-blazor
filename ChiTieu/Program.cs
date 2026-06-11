@@ -4,6 +4,7 @@ using ChiTieu.Data.Entities;
 using ChiTieu.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.HttpOverrides;
 using MudBlazor.Services;
 using Npgsql;
 using System.Globalization;
@@ -49,6 +50,21 @@ builder.Services.AddIdentity<AppUser, IdentityRole>(options =>
 .AddEntityFrameworkStores<AppDbContext>()
 .AddDefaultTokenProviders();
 
+builder.Services.ConfigureApplicationCookie(options =>
+{
+    options.LoginPath = "/account/login";
+    options.LogoutPath = "/account/logout";
+    options.AccessDeniedPath = "/account/login";
+    options.SlidingExpiration = true;
+});
+
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
 // ─── BLAZOR ───────────────────────────────────────────────────
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
@@ -89,9 +105,23 @@ try
         : "SUPABASE CONNECT FAILED: CanConnectAsync returned false");
 
     if (canConnect)
-{
-    Console.WriteLine("SUPABASE CONNECT OK - SKIP AUTO MIGRATION");
-}
+    {
+        var autoMigrate = !string.Equals(
+            Environment.GetEnvironmentVariable("AUTO_MIGRATE"),
+            "false",
+            StringComparison.OrdinalIgnoreCase);
+
+        if (autoMigrate)
+        {
+            Console.WriteLine("Running database migration...");
+            await db.Database.MigrateAsync();
+            Console.WriteLine("DATABASE MIGRATION SUCCESS");
+        }
+        else
+        {
+            Console.WriteLine("SUPABASE CONNECT OK - SKIP AUTO MIGRATION (AUTO_MIGRATE=false)");
+        }
+    }
 }
 catch (Exception ex)
 {
@@ -118,6 +148,7 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
+app.UseForwardedHeaders();
 app.UseStaticFiles();
 app.UseRouting();
 app.UseCors();
@@ -172,17 +203,48 @@ app.MapGet("/account/login", (string? returnUrl) =>
     return Results.Content(html, "text/html; charset=utf-8");
 });
 
-app.MapPost("/account/login", async (HttpContext http, SignInManager<AppUser> signInManager) =>
+app.MapPost("/account/login", async (
+    HttpContext http,
+    UserManager<AppUser> userManager,
+    SignInManager<AppUser> signInManager,
+    ILogger<Program> logger) =>
 {
     var form = await http.Request.ReadFormAsync();
     var email = form["email"].ToString();
     var password = form["password"].ToString();
     var returnUrl = form["returnUrl"].ToString();
 
-    var result = await signInManager.PasswordSignInAsync(email, password, isPersistent: true, lockoutOnFailure: false);
-    return result.Succeeded
-        ? Results.Redirect(IsLocalReturnUrl(returnUrl) ? returnUrl : "/dashboard")
-        : Results.Redirect("/account/login?error=1");
+    try
+    {
+        var user = await userManager.FindByEmailAsync(email)
+            ?? await userManager.FindByNameAsync(email);
+
+        if (user == null)
+        {
+            logger.LogWarning("Login failed: user not found for {Email}", email);
+            return Results.Redirect("/account/login?error=1");
+        }
+
+        var result = await signInManager.PasswordSignInAsync(user, password, isPersistent: true, lockoutOnFailure: false);
+        if (result.Succeeded)
+        {
+            return Results.Redirect(IsLocalReturnUrl(returnUrl) ? returnUrl : "/dashboard");
+        }
+
+        logger.LogWarning(
+            "Login failed for {Email}. IsLockedOut={IsLockedOut}, IsNotAllowed={IsNotAllowed}, RequiresTwoFactor={RequiresTwoFactor}",
+            email,
+            result.IsLockedOut,
+            result.IsNotAllowed,
+            result.RequiresTwoFactor);
+
+        return Results.Redirect("/account/login?error=1");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Login error for {Email}", email);
+        return Results.Redirect("/account/login?error=1");
+    }
 });
 
 app.MapGet("/account/register", () =>
@@ -210,7 +272,11 @@ app.MapGet("/account/register", () =>
     return Results.Content(html, "text/html; charset=utf-8");
 });
 
-app.MapPost("/account/register", async (HttpContext http, UserManager<AppUser> userManager, SignInManager<AppUser> signInManager) =>
+app.MapPost("/account/register", async (
+    HttpContext http,
+    UserManager<AppUser> userManager,
+    SignInManager<AppUser> signInManager,
+    ILogger<Program> logger) =>
 {
     var form = await http.Request.ReadFormAsync();
     var email = form["email"].ToString();
@@ -224,14 +290,28 @@ app.MapPost("/account/register", async (HttpContext http, UserManager<AppUser> u
         DisplayName = displayName
     };
 
-    var result = await userManager.CreateAsync(user, password);
-    if (!result.Succeeded)
+    IdentityResult result;
+    try
     {
+        result = await userManager.CreateAsync(user, password);
+        if (!result.Succeeded)
+        {
+            logger.LogWarning(
+                "Register failed for {Email}: {Errors}",
+                email,
+                string.Join(", ", result.Errors.Select(e => $"{e.Code}:{e.Description}")));
+
+            return Results.Redirect("/account/register?error=1");
+        }
+
+        await signInManager.SignInAsync(user, isPersistent: true);
+        return Results.Redirect("/dashboard");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Register error for {Email}", email);
         return Results.Redirect("/account/register?error=1");
     }
-
-    await signInManager.SignInAsync(user, isPersistent: true);
-    return Results.Redirect("/dashboard");
 });
 
 app.MapPost("/account/logout", async (SignInManager<AppUser> signInManager) =>
