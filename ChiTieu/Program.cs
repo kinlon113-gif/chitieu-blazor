@@ -447,10 +447,19 @@ static async Task RunSmokeTestAsync(IServiceProvider services)
             Note = "smoke expense",
             Date = DateTime.UtcNow,
             IsShared = true,
+            Latitude = 10.7769,
+            Longitude = 106.7009,
+            LocationAccuracy = 25,
+            LocationName = "Smoke Check-in",
+            CheckedInAt = DateTime.UtcNow,
         });
 
         var txs = await txService.GetByGroupMonthAsync(group.Id, month);
         if (txs.Count < 2) throw new InvalidOperationException("Transactions were not saved or loaded.");
+        if (!txs.Any(t => t.LocationName == "Smoke Check-in" && t.Latitude.HasValue && t.Longitude.HasValue))
+        {
+            throw new InvalidOperationException("Transaction location was not saved or loaded.");
+        }
 
         var summary = await txService.GetSummaryAsync(group.Id, month);
         if (summary.Income < 5_000_000m || summary.Expense < 120_000m)

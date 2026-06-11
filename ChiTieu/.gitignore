@@ -6,3 +6,9 @@ obj/
 *.log
 dotnet-run.*.log
 publish-check/
+ChiTieu.Web/node_modules/
+ChiTieu.Web/dist/
+ChiTieu.Web/.vite/
+ChiTieu.Web/*.tsbuildinfo
+ChiTieu.Web/vite.config.js
+ChiTieu.Web/vite.config.d.ts

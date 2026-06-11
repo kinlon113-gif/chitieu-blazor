@@ -60,6 +60,11 @@ public class Transaction
 
     // Receipt / invoice
     public string? ReceiptUrl  { get; set; }
+    public double?  Latitude   { get; set; }
+    public double?  Longitude  { get; set; }
+    public double?  LocationAccuracy { get; set; }
+    public string   LocationName { get; set; } = "";
+    public DateTime? CheckedInAt { get; set; }
 
     public Group   Group { get; set; } = null!;
     public AppUser User  { get; set; } = null!;

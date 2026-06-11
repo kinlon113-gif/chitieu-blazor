@@ -5,8 +5,10 @@
 @inject GroupService GroupService
 @inject AuthenticationStateProvider AuthState
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 @using ChiTieu.Services
 @using Microsoft.AspNetCore.Authorization
+@using Microsoft.JSInterop
 
 <PageTitle>Giao dịch - Chi Tiêu</PageTitle>
 
@@ -80,6 +82,12 @@
                             @(tx.User?.DisplayName ?? tx.User?.Email ?? "Ẩn danh") · @tx.Date.ToString("dd/MM/yyyy")
                             @if (tx.IsShared) { <span class="badge badge-blue">Chung</span> }
                             @if (tx.FromEmail) { <span class="badge badge-gray">VCB</span> }
+                            @if (HasLocation(tx))
+                            {
+                                <a class="badge badge-green tx-map-link" href="@MapUrl(tx)" target="_blank" rel="noopener">
+                                    @LocationLabel(tx)
+                                </a>
+                            }
                         </div>
                     </div>
                     <div class="tx-amount @(tx.Type == "income" ? "positive" : "negative")">
@@ -139,6 +147,32 @@
                 <input class="input" type="date" @bind="NewDate" />
             </div>
 
+            <div class="location-panel">
+                <div class="location-head">
+                    <div>
+                        <div class="input-label">Vi tri check-in</div>
+                        <div class="location-sub">@LocationStatus</div>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" @onclick="CaptureLocation" disabled="@Locating">
+                        @(Locating ? "Dang lay..." : "Lay vi tri")
+                    </button>
+                </div>
+                <input class="input" placeholder="Ten noi, vi du: Circle K, quan com, nha sach..."
+                       @bind="NewLocationName" @bind:event="oninput" />
+                @if (NewLatitude.HasValue && NewLongitude.HasValue)
+                {
+                    <div class="location-coordinates">
+                        @NewLatitude.Value.ToString("F6"), @NewLongitude.Value.ToString("F6")
+                        @if (NewLocationAccuracy.HasValue)
+                        {
+                            <span> - sai so ~@Math.Round(NewLocationAccuracy.Value)m</span>
+                        }
+                        <a href="@MapUrl(NewLatitude.Value, NewLongitude.Value)" target="_blank" rel="noopener">Mo ban do</a>
+                        <button class="btn btn-ghost btn-sm" @onclick="ClearLocation">Bo vi tri</button>
+                    </div>
+                }
+            </div>
+
             @if (NewType == "expense")
             {
                 <label class="toggle-row">
@@ -179,6 +213,12 @@
     private DateTime NewDate = DateTime.Today;
     private bool NewIsShared;
     private bool Saving;
+    private bool Locating;
+    private double? NewLatitude;
+    private double? NewLongitude;
+    private double? NewLocationAccuracy;
+    private string NewLocationName = "";
+    private string LocationStatus = "Luu toa do hien tai neu ban cho phep trinh duyet.";
     private string FormError = "";
     private string PageMessage = "";
     private bool PageMessageIsError;
@@ -238,6 +278,46 @@
         FormError = "";
     }
 
+    private async Task CaptureLocation()
+    {
+        FormError = "";
+        LocationStatus = "Dang xin quyen va lay vi tri...";
+        Locating = true;
+
+        try
+        {
+            var result = await JS.InvokeAsync<BrowserLocationResult>("chiTieuLocation.getCurrentPosition");
+            if (!result.Ok || result.Latitude == null || result.Longitude == null)
+            {
+                LocationStatus = result.Error ?? "Khong lay duoc vi tri.";
+                return;
+            }
+
+            NewLatitude = result.Latitude;
+            NewLongitude = result.Longitude;
+            NewLocationAccuracy = result.Accuracy;
+            LocationStatus = "Da lay vi tri, co the them ten noi neu muon.";
+        }
+        catch (JSException ex)
+        {
+            LocationStatus = "Khong goi duoc tinh nang vi tri tren trinh duyet.";
+            FormError = ex.Message;
+        }
+        finally
+        {
+            Locating = false;
+        }
+    }
+
+    private void ClearLocation()
+    {
+        NewLatitude = null;
+        NewLongitude = null;
+        NewLocationAccuracy = null;
+        NewLocationName = "";
+        LocationStatus = "Luu toa do hien tai neu ban cho phep trinh duyet.";
+    }
+
     private void SetType(string type)
     {
         NewType = type;
@@ -289,12 +369,18 @@
                 Note = NewNote.Trim(),
                 IsShared = NewIsShared && NewType == "expense",
                 Date = DateTime.SpecifyKind(NewDate.Date, DateTimeKind.Utc),
+                Latitude = NewLatitude,
+                Longitude = NewLongitude,
+                LocationAccuracy = NewLocationAccuracy,
+                LocationName = NewLocationName.Trim(),
+                CheckedInAt = NewLatitude.HasValue && NewLongitude.HasValue ? DateTime.UtcNow : null,
             });
 
             ShowAdd = false;
             NewAmountStr = "";
             NewNote = "";
             NewIsShared = false;
+            ClearLocation();
             PageMessage = "Đã lưu giao dịch.";
             PageMessageIsError = false;
             await LoadAsync();
@@ -355,6 +441,26 @@
     };
 
     private static string Money(decimal value) => $"{value:N0}đ";
+
+    private static bool HasLocation(Transaction tx) => tx.Latitude.HasValue && tx.Longitude.HasValue;
+
+    private static string LocationLabel(Transaction tx)
+        => string.IsNullOrWhiteSpace(tx.LocationName) ? "Check-in" : tx.LocationName;
+
+    private static string MapUrl(Transaction tx)
+        => HasLocation(tx) ? MapUrl(tx.Latitude!.Value, tx.Longitude!.Value) : "#";
+
+    private static string MapUrl(double latitude, double longitude)
+        => $"https://www.google.com/maps/search/?api=1&query={latitude.ToString(System.Globalization.CultureInfo.InvariantCulture)},{longitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
+    private sealed class BrowserLocationResult
+    {
+        public bool Ok { get; set; }
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
+        public double? Accuracy { get; set; }
+        public string? Error { get; set; }
+    }
 
     private static decimal ParseAmount(string input)
     {

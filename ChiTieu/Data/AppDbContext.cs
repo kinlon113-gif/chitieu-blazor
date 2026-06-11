@@ -45,9 +45,11 @@ public class AppDbContext : IdentityDbContext<AppUser>
         builder.Entity<Transaction>(e =>
         {
             e.Property(t => t.Amount).HasPrecision(18, 0);
+            e.Property(t => t.LocationName).HasMaxLength(160);
             e.HasOne(t => t.Group).WithMany(g => g.Transactions).HasForeignKey(t => t.GroupId);
             e.HasOne(t => t.User).WithMany(u => u.Transactions).HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(t => new { t.GroupId, t.Month });
+            e.HasIndex(t => new { t.GroupId, t.Latitude, t.Longitude });
         });
 
         // SplitBill
