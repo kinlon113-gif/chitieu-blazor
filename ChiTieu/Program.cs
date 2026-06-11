@@ -320,6 +320,9 @@ app.MapPost("/account/logout", async (SignInManager<AppUser> signInManager) =>
     return Results.Redirect("/account/login");
 });
 
+app.MapGet("/", () => Results.Redirect("/dashboard"));
+app.MapGet("/healthz", () => Results.Ok("OK"));
+
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
 
