@@ -60,4 +60,8 @@
   .mobile-safe {
     padding-bottom: env(safe-area-inset-bottom);
   }
+
+  .input-like {
+    @apply h-10 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50;
+  }
 }

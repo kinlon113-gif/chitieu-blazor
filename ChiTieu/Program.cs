@@ -370,6 +370,281 @@ app.MapGet("/", () => Results.Redirect("/dashboard"));
 app.MapGet("/healthz", () => Results.Ok("OK"));
 app.MapGet("/react", () => Results.Redirect("/react/index.html"));
 
+var api = app.MapGroup("/api").RequireAuthorization();
+
+api.MapGet("/app", async (
+    HttpContext http,
+    GroupService groupService,
+    TransactionService txService,
+    BudgetService budgetService,
+    DebtService debtService,
+    SplitBillService splitService,
+    AppDbContext db,
+    string? month) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+
+    var monthKey = NormalizeMonth(month);
+    var groups = await groupService.GetUserGroupsAsync(userId);
+    var group = groups.FirstOrDefault();
+    if (group == null)
+    {
+        return Results.Ok(new AppStateResponse(
+            null,
+            Array.Empty<MemberResponse>(),
+            Array.Empty<TransactionResponse>(),
+            Array.Empty<BudgetResponse>(),
+            Array.Empty<DebtResponse>(),
+            null,
+            Array.Empty<FundTransactionResponse>(),
+            Array.Empty<SplitResponse>(),
+            new ReportResponse(0, 0, 0, 0, new(), new())));
+    }
+
+    var transactions = await txService.GetByGroupMonthAsync(group.Id, monthKey);
+    var budgets = await budgetService.GetByGroupMonthAsync(group.Id, monthKey);
+    var spending = await txService.GetExpenseByCategoryAsync(group.Id, monthKey);
+    var debts = await debtService.GetGroupDebtsAsync(group.Id);
+    var splits = await splitService.GetGroupSplitsAsync(group.Id);
+    var fund = await GetOrCreateSharedFundAsync(db, group.Id);
+    var fundTransactions = await db.FundTransactions
+        .Where(t => t.FundId == fund.Id)
+        .OrderByDescending(t => t.Date)
+        .Take(30)
+        .Select(t => new FundTransactionResponse(t.Id, t.Type, t.Amount, t.Note, t.Date, t.UserId))
+        .ToListAsync();
+
+    var income = transactions.Where(t => t.Type == "income").Sum(t => t.Amount);
+    var expense = transactions.Where(t => t.Type == "expense").Sum(t => t.Amount);
+    var byCategory = await txService.GetExpenseByCategoryAsync(group.Id, monthKey);
+    var byMember = await txService.GetExpenseByMemberAsync(group.Id, monthKey);
+
+    return Results.Ok(new AppStateResponse(
+        new GroupResponse(group.Id, group.Name, group.Description, group.InviteCode),
+        group.Members.Select(m => new MemberResponse(
+            m.UserId,
+            m.User.DisplayName,
+            m.User.Email ?? "",
+            m.Role,
+            transactions.Where(t => t.UserId == m.UserId && t.Type == "expense").Sum(t => t.Amount))).ToList(),
+        transactions.Select(ToTransactionResponse).ToList(),
+        budgets.Select(b => new BudgetResponse(
+            b.Id,
+            b.CategoryId,
+            b.Amount,
+            b.Month,
+            spending.GetValueOrDefault(b.CategoryId, 0))).ToList(),
+        debts.Select(d => new DebtResponse(
+            d.Id,
+            d.DebtorId,
+            d.Debtor.DisplayName,
+            d.CreditorId,
+            d.Creditor.DisplayName,
+            d.Amount,
+            d.Note,
+            d.CreatedAt)).ToList(),
+        new FundResponse(fund.Id, fund.Name, fund.Balance),
+        fundTransactions,
+        splits.Select(s => new SplitResponse(
+            s.Id,
+            s.Description,
+            s.TotalAmount,
+            s.SplitType,
+            s.Date,
+            s.IsSettled,
+            s.Items.Count,
+            s.Items.Count(i => i.IsPaid))).ToList(),
+        new ReportResponse(
+            income,
+            expense,
+            income - expense,
+            transactions.Count,
+            byCategory,
+            byMember)));
+});
+
+api.MapPost("/groups", async (
+    HttpContext http,
+    GroupService groupService,
+    GroupCreateRequest request) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+    var name = request.Name?.Trim();
+    if (string.IsNullOrWhiteSpace(name)) return Results.BadRequest(new { message = "Tên nhóm chưa hợp lệ." });
+
+    var group = await groupService.CreateAsync(name, request.Description?.Trim() ?? "", userId);
+    return Results.Ok(new GroupResponse(group.Id, group.Name, group.Description, group.InviteCode));
+});
+
+api.MapPost("/groups/join", async (
+    HttpContext http,
+    GroupService groupService,
+    GroupJoinRequest request) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+    var code = request.InviteCode?.Trim();
+    if (string.IsNullOrWhiteSpace(code)) return Results.BadRequest(new { message = "Mã mời chưa hợp lệ." });
+
+    var group = await groupService.JoinByCodeAsync(code, userId);
+    return Results.Ok(group == null ? null : new GroupResponse(group.Id, group.Name, group.Description, group.InviteCode));
+});
+
+api.MapPost("/transactions", async (
+    HttpContext http,
+    GroupService groupService,
+    TransactionService txService,
+    TransactionRequest request) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+
+    var group = (await groupService.GetUserGroupsAsync(userId)).FirstOrDefault();
+    if (group == null) return Results.BadRequest(new { message = "Bạn cần tạo hoặc tham gia nhóm trước." });
+
+    if (request.Amount <= 0) return Results.BadRequest(new { message = "Số tiền chưa hợp lệ." });
+    var type = request.Type == "income" ? "income" : "expense";
+    var category = string.IsNullOrWhiteSpace(request.Category) ? (type == "income" ? "other" : "other") : request.Category.Trim();
+    var date = request.Date == default ? DateTime.UtcNow : DateTime.SpecifyKind(request.Date.Date, DateTimeKind.Utc);
+
+    var tx = await txService.AddAsync(new Transaction
+    {
+        GroupId = group.Id,
+        UserId = userId,
+        Type = type,
+        Amount = request.Amount,
+        Category = category,
+        Note = request.Note?.Trim() ?? "",
+        IsShared = request.IsShared && type == "expense",
+        Date = date,
+        Latitude = request.Latitude,
+        Longitude = request.Longitude,
+        LocationAccuracy = request.LocationAccuracy,
+        LocationName = request.LocationName?.Trim() ?? "",
+        CheckedInAt = request.Latitude.HasValue && request.Longitude.HasValue ? DateTime.UtcNow : null,
+    });
+
+    return Results.Ok(ToTransactionResponse(tx));
+});
+
+api.MapDelete("/transactions/{id:int}", async (HttpContext http, TransactionService txService, int id) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+    await txService.DeleteAsync(id, userId);
+    return Results.NoContent();
+});
+
+api.MapPost("/budgets", async (
+    HttpContext http,
+    GroupService groupService,
+    BudgetService budgetService,
+    BudgetRequest request) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+    var group = (await groupService.GetUserGroupsAsync(userId)).FirstOrDefault();
+    if (group == null) return Results.BadRequest(new { message = "Bạn cần tạo hoặc tham gia nhóm trước." });
+    if (request.Amount <= 0) return Results.BadRequest(new { message = "Số tiền ngân sách chưa hợp lệ." });
+
+    await budgetService.SetAsync(group.Id, request.CategoryId.Trim(), NormalizeMonth(request.Month), request.Amount);
+    return Results.NoContent();
+});
+
+api.MapDelete("/budgets/{id:int}", async (
+    HttpContext http,
+    GroupService groupService,
+    BudgetService budgetService,
+    AppDbContext db,
+    int id) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+    var groupIds = (await groupService.GetUserGroupsAsync(userId)).Select(g => g.Id).ToHashSet();
+    var budget = await db.Budgets.FindAsync(id);
+    if (budget == null) return Results.NoContent();
+    if (!groupIds.Contains(budget.GroupId)) return Results.Forbid();
+
+    await budgetService.DeleteAsync(id);
+    return Results.NoContent();
+});
+
+api.MapPost("/fund-transactions", async (
+    HttpContext http,
+    GroupService groupService,
+    AppDbContext db,
+    FundTransactionRequest request) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+    var group = (await groupService.GetUserGroupsAsync(userId)).FirstOrDefault();
+    if (group == null) return Results.BadRequest(new { message = "Bạn cần tạo hoặc tham gia nhóm trước." });
+    if (request.Amount <= 0) return Results.BadRequest(new { message = "Số tiền quỹ chưa hợp lệ." });
+
+    var fund = await GetOrCreateSharedFundAsync(db, group.Id);
+    var type = request.Type == "withdraw" ? "withdraw" : "deposit";
+    db.FundTransactions.Add(new FundTransaction
+    {
+        FundId = fund.Id,
+        UserId = userId,
+        Type = type,
+        Amount = request.Amount,
+        Note = request.Note?.Trim() ?? "",
+        Date = DateTime.UtcNow,
+    });
+    fund.Balance += type == "deposit" ? request.Amount : -request.Amount;
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+
+api.MapPost("/splits", async (
+    HttpContext http,
+    GroupService groupService,
+    SplitBillService splitService,
+    SplitCreateRequest request) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+    var group = (await groupService.GetUserGroupsAsync(userId)).FirstOrDefault();
+    if (group == null) return Results.BadRequest(new { message = "Bạn cần tạo hoặc tham gia nhóm trước." });
+    if (request.TotalAmount <= 0) return Results.BadRequest(new { message = "Số tiền chia chưa hợp lệ." });
+
+    var memberIds = group.Members.Select(m => m.UserId).ToHashSet();
+    var participants = request.ParticipantIds?
+        .Where(id => memberIds.Contains(id))
+        .Distinct()
+        .ToList() ?? new List<string>();
+    if (!participants.Contains(userId)) participants.Insert(0, userId);
+    if (participants.Count == 0) return Results.BadRequest(new { message = "Chọn ít nhất một thành viên." });
+
+    var bill = await splitService.SplitEquallyAsync(
+        group.Id,
+        userId,
+        request.TotalAmount,
+        request.Description?.Trim() ?? "",
+        participants);
+
+    return Results.Ok(new SplitResponse(
+        bill.Id,
+        bill.Description,
+        bill.TotalAmount,
+        bill.SplitType,
+        bill.Date,
+        bill.IsSettled,
+        bill.Items.Count,
+        bill.Items.Count(i => i.IsPaid)));
+});
+
+api.MapPost("/debts/{id:int}/settle", async (HttpContext http, DebtService debtService, int id) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+    await debtService.SettleAsync(id, userId);
+    return Results.NoContent();
+});
+
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
 
@@ -553,3 +828,93 @@ static async Task CleanupSmokeUsersAsync(IServiceProvider services)
 
     Console.WriteLine($"CLEANED_SMOKE_USERS {smokeUsers.Count}");
 }
+
+static string GetCurrentUserId(HttpContext http)
+    => http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+
+static string NormalizeMonth(string? month)
+    => string.IsNullOrWhiteSpace(month) ? DateTime.Now.ToString("yyyy-MM", CultureInfo.InvariantCulture) : month;
+
+static async Task<SharedFund> GetOrCreateSharedFundAsync(AppDbContext db, int groupId)
+{
+    var fund = await db.SharedFunds.FirstOrDefaultAsync(f => f.GroupId == groupId);
+    if (fund != null) return fund;
+
+    fund = new SharedFund { GroupId = groupId, Name = "Quỹ chung" };
+    db.SharedFunds.Add(fund);
+    await db.SaveChangesAsync();
+    return fund;
+}
+
+static TransactionResponse ToTransactionResponse(Transaction tx)
+    => new(
+        tx.Id,
+        tx.Type,
+        tx.Amount,
+        tx.Category,
+        tx.Note,
+        tx.IsShared,
+        tx.Date,
+        tx.Month,
+        tx.FromEmail,
+        tx.UserId,
+        tx.User?.DisplayName ?? "",
+        tx.Latitude,
+        tx.Longitude,
+        tx.LocationAccuracy,
+        tx.LocationName,
+        tx.CheckedInAt);
+
+record AppStateResponse(
+    GroupResponse? Group,
+    IReadOnlyList<MemberResponse> Members,
+    IReadOnlyList<TransactionResponse> Transactions,
+    IReadOnlyList<BudgetResponse> Budgets,
+    IReadOnlyList<DebtResponse> Debts,
+    FundResponse? Fund,
+    IReadOnlyList<FundTransactionResponse> FundTransactions,
+    IReadOnlyList<SplitResponse> Splits,
+    ReportResponse Report);
+
+record GroupResponse(int Id, string Name, string Description, string InviteCode);
+record MemberResponse(string Id, string Name, string Email, string Role, decimal Spent);
+record TransactionResponse(
+    int Id,
+    string Type,
+    decimal Amount,
+    string Category,
+    string Note,
+    bool IsShared,
+    DateTime Date,
+    string Month,
+    bool FromEmail,
+    string UserId,
+    string UserName,
+    double? Latitude,
+    double? Longitude,
+    double? LocationAccuracy,
+    string LocationName,
+    DateTime? CheckedInAt);
+record BudgetResponse(int Id, string CategoryId, decimal Amount, string Month, decimal Spent);
+record DebtResponse(int Id, string DebtorId, string DebtorName, string CreditorId, string CreditorName, decimal Amount, string Note, DateTime CreatedAt);
+record FundResponse(int Id, string Name, decimal Balance);
+record FundTransactionResponse(int Id, string Type, decimal Amount, string Note, DateTime Date, string UserId);
+record SplitResponse(int Id, string Description, decimal TotalAmount, string SplitType, DateTime Date, bool IsSettled, int MemberCount, int PaidCount);
+record ReportResponse(decimal Income, decimal Expense, decimal Balance, int Count, Dictionary<string, decimal> ByCategory, Dictionary<string, decimal> ByMember);
+
+record TransactionRequest(
+    string Type,
+    decimal Amount,
+    string Category,
+    string? Note,
+    bool IsShared,
+    DateTime Date,
+    double? Latitude,
+    double? Longitude,
+    double? LocationAccuracy,
+    string? LocationName);
+record GroupCreateRequest(string? Name, string? Description);
+record GroupJoinRequest(string? InviteCode);
+record BudgetRequest(string CategoryId, string Month, decimal Amount);
+record FundTransactionRequest(string Type, decimal Amount, string? Note);
+record SplitCreateRequest(decimal TotalAmount, string? Description, List<string>? ParticipantIds);
