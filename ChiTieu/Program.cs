@@ -93,13 +93,9 @@ try
 
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-    Console.WriteLine("Testing Supabase connection...");
+    Console.WriteLine("Skipping startup Supabase connection check so Railway can bind the port quickly.");
 
     var canConnect = false;
-
-    Console.WriteLine(canConnect
-        ? "SUPABASE CONNECT SUCCESS"
-        : "SUPABASE CONNECT FAILED: CanConnectAsync returned false");
 
     if (canConnect)
     {
@@ -280,54 +276,72 @@ app.MapPost("/account/register", async (
     var password = form["password"].ToString();
     var displayName = form["displayName"].ToString();
 
-    var user = new AppUser
-    {
-        UserName = email,
-        Email = email,
-        DisplayName = displayName
-    };
-
-    IdentityResult result;
     try
     {
-        result = await userManager.CreateAsync(user, password);
-        if (!result.Succeeded)
+        logger.LogInformation("Register POST received for {Email}", email);
+
+        var existingUser = await userManager.FindByEmailAsync(email)
+            ?? await userManager.FindByNameAsync(email);
+
+        if (existingUser != null)
         {
-            if (result.Errors.Any(e => e.Code == nameof(IdentityErrorDescriber.DuplicateUserName) || e.Code == nameof(IdentityErrorDescriber.DuplicateEmail)))
+            existingUser.Email = email;
+            existingUser.UserName = email;
+            existingUser.DisplayName = string.IsNullOrWhiteSpace(displayName)
+                ? existingUser.DisplayName
+                : displayName;
+
+            var update = await userManager.UpdateAsync(existingUser);
+            if (!update.Succeeded)
             {
-                var existingUser = await userManager.FindByEmailAsync(email)
-                    ?? await userManager.FindByNameAsync(email);
+                logger.LogWarning(
+                    "Update existing account failed for {Email}: {Errors}",
+                    email,
+                    string.Join(", ", update.Errors.Select(e => $"{e.Code}:{e.Description}")));
 
-                if (existingUser != null)
+                return Results.Redirect("/account/register?error=1");
+            }
+
+            if (await userManager.HasPasswordAsync(existingUser))
+            {
+                var removePassword = await userManager.RemovePasswordAsync(existingUser);
+                if (!removePassword.Succeeded)
                 {
-                    existingUser.Email = email;
-                    existingUser.UserName = email;
-                    existingUser.DisplayName = string.IsNullOrWhiteSpace(displayName)
-                        ? existingUser.DisplayName
-                        : displayName;
-
-                    await userManager.UpdateAsync(existingUser);
-
-                    if (await userManager.HasPasswordAsync(existingUser))
-                    {
-                        await userManager.RemovePasswordAsync(existingUser);
-                    }
-
-                    var resetPassword = await userManager.AddPasswordAsync(existingUser, password);
-                    if (resetPassword.Succeeded)
-                    {
-                        logger.LogWarning("Reset password for existing account {Email} from register form", email);
-                        await signInManager.SignInAsync(existingUser, isPersistent: true);
-                        return Results.Redirect("/dashboard");
-                    }
-
                     logger.LogWarning(
-                        "Reset password failed for existing account {Email}: {Errors}",
+                        "Remove old password failed for {Email}: {Errors}",
                         email,
-                        string.Join(", ", resetPassword.Errors.Select(e => $"{e.Code}:{e.Description}")));
+                        string.Join(", ", removePassword.Errors.Select(e => $"{e.Code}:{e.Description}")));
+
+                    return Results.Redirect("/account/register?error=1");
                 }
             }
 
+            var addPassword = await userManager.AddPasswordAsync(existingUser, password);
+            if (!addPassword.Succeeded)
+            {
+                logger.LogWarning(
+                    "Add new password failed for {Email}: {Errors}",
+                    email,
+                    string.Join(", ", addPassword.Errors.Select(e => $"{e.Code}:{e.Description}")));
+
+                return Results.Redirect("/account/register?error=1");
+            }
+
+            logger.LogWarning("Reset password for existing account {Email} from register form", email);
+            await signInManager.SignInAsync(existingUser, isPersistent: true);
+            return Results.Redirect("/dashboard");
+        }
+
+        var user = new AppUser
+        {
+            UserName = email,
+            Email = email,
+            DisplayName = displayName
+        };
+
+        var result = await userManager.CreateAsync(user, password);
+        if (!result.Succeeded)
+        {
             logger.LogWarning(
                 "Register failed for {Email}: {Errors}",
                 email,
