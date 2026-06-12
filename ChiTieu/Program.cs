@@ -496,6 +496,8 @@ api.MapPost("/transactions", async (
     HttpContext http,
     GroupService groupService,
     TransactionService txService,
+    SplitBillService splitService,
+    AppDbContext db,
     TransactionRequest request) =>
 {
     var userId = GetCurrentUserId(http);
@@ -525,6 +527,40 @@ api.MapPost("/transactions", async (
         LocationName = request.LocationName?.Trim() ?? "",
         CheckedInAt = request.Latitude.HasValue && request.Longitude.HasValue ? DateTime.UtcNow : null,
     });
+
+    if (tx.IsShared)
+    {
+        if (request.FundAction is "deposit" or "withdraw")
+        {
+            var fund = await GetOrCreateSharedFundAsync(db, group.Id);
+            db.FundTransactions.Add(new FundTransaction
+            {
+                FundId = fund.Id,
+                UserId = userId,
+                Type = request.FundAction,
+                Amount = tx.Amount,
+                Note = string.IsNullOrWhiteSpace(tx.Note) ? "Giao dich chung" : $"Giao dich chung: {tx.Note}",
+                Date = DateTime.UtcNow,
+            });
+            fund.Balance += request.FundAction == "deposit" ? tx.Amount : -tx.Amount;
+            await db.SaveChangesAsync();
+        }
+
+        var splitParticipants = request.SplitParticipantIds?
+            .Where(id => group.Members.Any(m => m.UserId == id))
+            .Distinct()
+            .ToList();
+        if (splitParticipants is { Count: > 0 })
+        {
+            if (!splitParticipants.Contains(userId)) splitParticipants.Insert(0, userId);
+            await splitService.SplitEquallyAsync(
+                group.Id,
+                userId,
+                tx.Amount,
+                string.IsNullOrWhiteSpace(tx.Note) ? "Giao dich chung" : tx.Note,
+                splitParticipants);
+        }
+    }
 
     return Results.Ok(ToTransactionResponse(tx));
 });
@@ -908,6 +944,8 @@ record TransactionRequest(
     string Category,
     string? Note,
     bool IsShared,
+    string? FundAction,
+    List<string>? SplitParticipantIds,
     DateTime Date,
     double? Latitude,
     double? Longitude,

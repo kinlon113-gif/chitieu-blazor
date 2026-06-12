@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -6,6 +6,7 @@ import {
   Bell,
   CalendarDays,
   Check,
+  ClipboardList,
   CreditCard,
   HandCoins,
   Home,
@@ -30,7 +31,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input } from "@/components/ui/input";
 import { money } from "@/lib/utils";
 
-type ViewId = "overview" | "transactions" | "budget" | "fund" | "debts" | "reports" | "split" | "groups" | "settings";
+type ViewId = "overview" | "transactions" | "budget" | "fund" | "debts" | "reports" | "split" | "groups" | "tasks" | "settings";
 
 type AppState = {
   group: Group | null;
@@ -75,6 +76,14 @@ type SplitItem = {
   memberCount: number;
   paidCount: number;
 };
+type TaskItem = {
+  id: string;
+  title: string;
+  period: "morning" | "afternoon" | "evening";
+  cadence: "daily" | "weekly" | "monthly" | "event";
+  date: string;
+  done: boolean;
+};
 type Report = {
   income: number;
   expense: number;
@@ -105,6 +114,7 @@ const navItems: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
   { id: "reports", label: "Báo cáo", icon: BadgeDollarSign },
   { id: "split", label: "Chia tiền", icon: Split },
   { id: "groups", label: "Nhóm", icon: Users },
+  { id: "tasks", label: "Lich task", icon: ClipboardList },
   { id: "settings", label: "Cài đặt", icon: Settings },
 ];
 
@@ -148,6 +158,29 @@ function parseAmount(input: string) {
   return Number.isFinite(value) ? value * multiplier : 0;
 }
 
+function formatAmountInput(input: string) {
+  if (/[a-zA-Z.]/.test(input)) return input;
+  const digits = input.replace(/\D/g, "");
+  if (!digits) return "";
+  return Number(digits).toLocaleString("en-US");
+}
+
+function useLocalTasks() {
+  const [tasks, setTasks] = useState<TaskItem[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("chitieu.tasks") || "[]") as TaskItem[];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("chitieu.tasks", JSON.stringify(tasks));
+  }, [tasks]);
+
+  return [tasks, setTasks] as const;
+}
+
 function labelOf(category: string) {
   return [...expenseCategories, ...incomeCategories].find((item) => item.id === category)?.label ?? "Khác";
 }
@@ -173,11 +206,13 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 export default function App() {
   const [activeView, setActiveView] = useState<ViewId>("overview");
   const [state, setState] = useState<AppState>(emptyState);
+  const [tasks, setTasks] = useLocalTasks();
   const [month, setMonth] = useState(monthKey());
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const activeLabel = useMemo(() => navItems.find((item) => item.id === activeView)?.label ?? "Tổng quan", [activeView]);
 
@@ -196,6 +231,12 @@ export default function App() {
   useEffect(() => {
     void load();
   }, [month]);
+
+  const navigate = (view: ViewId) => {
+    setActiveView(view);
+    setMobileMenuOpen(false);
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+  };
 
   const filteredTransactions = state.transactions.filter((tx) => {
     const haystack = `${tx.note} ${tx.userName} ${labelOf(tx.category)} ${tx.locationName}`.toLowerCase();
@@ -218,7 +259,7 @@ export default function App() {
             {navItems.map((item) => (
               <button
                 key={item.id}
-                onClick={() => setActiveView(item.id)}
+                onClick={() => navigate(item.id)}
                 className={[
                   "flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm font-semibold transition",
                   activeView === item.id ? "bg-white text-slate-950" : "text-slate-400 hover:bg-white/10 hover:text-white",
@@ -240,7 +281,7 @@ export default function App() {
       <main className="min-h-screen lg:pl-72">
         <header className="sticky top-0 z-20 border-b border-white/70 bg-white/85 backdrop-blur-xl">
           <div className="container flex h-16 items-center gap-3">
-            <Button variant="ghost" size="icon" className="lg:hidden">
+            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileMenuOpen((current) => !current)}>
               <Menu className="h-5 w-5" />
             </Button>
             <div>
@@ -262,8 +303,26 @@ export default function App() {
             <Button variant="outline" size="icon">
               <Bell className="h-4 w-4" />
             </Button>
-            <QuickAddDialog onSaved={load} disabled={!state.group} />
+            <QuickAddDialog onSaved={load} disabled={!state.group} members={state.members} />
           </div>
+          {mobileMenuOpen && (
+            <div className="container grid gap-2 pb-3 lg:hidden">
+              <div className="grid grid-cols-2 gap-2 rounded-md border bg-white p-2 shadow-soft">
+                {navItems.slice(5).map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => navigate(item.id)}
+                    className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold ${
+                      activeView === item.id ? "bg-blue-50 text-blue-700" : "text-slate-600"
+                    }`}
+                  >
+                    <item.icon className="h-4 w-4" />
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </header>
 
         <div className="container grid gap-5 py-5 pb-24 lg:pb-5">
@@ -288,6 +347,7 @@ export default function App() {
               {activeView === "reports" && <ReportsView report={state.report} month={month} setMonth={setMonth} />}
               {activeView === "split" && <SplitView splits={state.splits} members={state.members} onSaved={load} />}
               {activeView === "groups" && <GroupsView group={state.group} members={state.members} />}
+              {activeView === "tasks" && <TasksView tasks={tasks} setTasks={setTasks} />}
               {activeView === "settings" && <SettingsView />}
             </>
           )}
@@ -299,7 +359,7 @@ export default function App() {
           {navItems.slice(0, 5).map((item) => (
             <button
               key={item.id}
-              onClick={() => setActiveView(item.id)}
+              onClick={() => navigate(item.id)}
               className={`flex flex-col items-center gap-1 rounded-md px-1 py-2 text-[10px] font-semibold ${
                 activeView === item.id ? "bg-blue-50 text-blue-600" : "text-slate-500"
               }`}
@@ -418,7 +478,7 @@ function BudgetView({ budgets, month, setMonth, onSaved }: { budgets: Budget[]; 
             ))}
           </select>
           <Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
-          <Input placeholder="3m, 2500000" value={amount} onChange={(event) => setAmount(event.target.value)} />
+          <Input placeholder="3m, 2500000" value={amount} onChange={(event) => setAmount(formatAmountInput(event.target.value))} />
           <Button onClick={save} disabled={saving}>Lưu</Button>
           {error && <div className="text-sm font-medium text-red-600 md:col-span-4">{error}</div>}
         </CardContent>
@@ -456,7 +516,7 @@ function FundView({ state, onSaved }: { state: AppState; onSaved: () => void }) 
               <option value="deposit">Nạp quỹ</option>
               <option value="withdraw">Rút quỹ</option>
             </select>
-            <Input placeholder="Số tiền" value={amount} onChange={(event) => setAmount(event.target.value)} />
+            <Input placeholder="Số tiền" value={amount} onChange={(event) => setAmount(formatAmountInput(event.target.value))} />
             <Input placeholder="Ghi chú" value={note} onChange={(event) => setNote(event.target.value)} />
             <Button onClick={save}>Lưu quỹ</Button>
           </div>
@@ -607,7 +667,7 @@ function SplitView({ splits, members, onSaved }: { splits: SplitItem[]; members:
         </CardHeader>
         <CardContent className="grid gap-3">
           <Input placeholder="Mô tả" value={description} onChange={(event) => setDescription(event.target.value)} />
-          <Input placeholder="Tổng tiền" value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" />
+          <Input placeholder="Tổng tiền" value={amount} onChange={(event) => setAmount(formatAmountInput(event.target.value))} inputMode="decimal" />
           <div className="grid gap-2">
             {members.map((member) => (
               <label key={member.id} className="flex items-center justify-between rounded-md border bg-white px-3 py-2 text-sm font-semibold">
@@ -657,6 +717,129 @@ function GroupsView({ group, members }: { group: Group; members: Member[] }) {
         </CardHeader>
         <CardContent>
           <div className="rounded-md border bg-slate-50 p-4 text-center text-2xl font-black tracking-[0.3em] text-blue-600">{group.inviteCode}</div>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+function TasksView({ tasks, setTasks }: { tasks: TaskItem[]; setTasks: Dispatch<SetStateAction<TaskItem[]>> }) {
+  const [title, setTitle] = useState("");
+  const [period, setPeriod] = useState<TaskItem["period"]>("morning");
+  const [cadence, setCadence] = useState<TaskItem["cadence"]>("daily");
+  const [date, setDate] = useState(dateKey());
+
+  const periods: Array<{ id: TaskItem["period"]; label: string }> = [
+    { id: "morning", label: "Sáng" },
+    { id: "afternoon", label: "Chiều" },
+    { id: "evening", label: "Tối" },
+  ];
+  const today = dateKey();
+
+  const addTask = () => {
+    const cleanTitle = title.trim();
+    if (!cleanTitle) return;
+    setTasks((current) => [
+      ...current,
+      { id: crypto.randomUUID(), title: cleanTitle, period, cadence, date, done: false },
+    ]);
+    setTitle("");
+  };
+
+  const toggleDone = (id: string) => {
+    setTasks((current) => current.map((task) => (task.id === id ? { ...task, done: !task.done } : task)));
+  };
+
+  const reschedule = (id: string) => {
+    setTasks((current) => current.map((task) => (task.id === id ? { ...task, date: today, done: false } : task)));
+  };
+
+  const removeTask = (id: string) => {
+    setTasks((current) => current.filter((task) => task.id !== id));
+  };
+
+  const sorted = [...tasks].sort((a, b) => `${a.date}-${a.period}`.localeCompare(`${b.date}-${b.period}`));
+  const lateCount = tasks.filter((task) => !task.done && task.date < today).length;
+
+  return (
+    <section className="grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
+      <Card>
+        <CardHeader>
+          <CardTitle>Lịch task</CardTitle>
+          <CardDescription>Tổ chức việc sáng, chiều, tối; task trễ có thể dời lại lịch để hoàn thành.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <Input placeholder="Tên công việc hoặc sự kiện" value={title} onChange={(event) => setTitle(event.target.value)} />
+          <div className="grid grid-cols-3 gap-2">
+            {periods.map((item) => (
+              <button
+                key={item.id}
+                className={`rounded-md border px-3 py-2 text-sm font-bold ${period === item.id ? "border-blue-500 bg-blue-50 text-blue-700" : "bg-white"}`}
+                onClick={() => setPeriod(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <select className="input-like" value={cadence} onChange={(event) => setCadence(event.target.value as TaskItem["cadence"])}>
+            <option value="daily">Hàng ngày</option>
+            <option value="weekly">Hàng tuần</option>
+            <option value="monthly">Hàng tháng</option>
+            <option value="event">Sự kiện</option>
+          </select>
+          <Input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+          <Button onClick={addTask}>
+            <CalendarDays className="h-4 w-4" />
+            Thêm task
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <CardHeader className="flex-row items-center justify-between gap-3">
+          <div>
+            <CardTitle>Hôm nay và sắp tới</CardTitle>
+            <CardDescription>{lateCount > 0 ? `${lateCount} task đang trễ cần xếp lại.` : "Không có task trễ."}</CardDescription>
+          </div>
+          <Badge variant={lateCount > 0 ? "danger" : "success"}>{tasks.filter((task) => task.done).length}/{tasks.length} done</Badge>
+        </CardHeader>
+        <CardContent className="p-0">
+          {sorted.length === 0 ? <EmptyRows text="Chưa có task nào." /> : null}
+          {periods.map((slot) => {
+            const rows = sorted.filter((task) => task.period === slot.id);
+            if (rows.length === 0) return null;
+            return (
+              <div key={slot.id} className="border-t">
+                <div className="bg-slate-50 px-5 py-2 text-xs font-black uppercase tracking-wide text-slate-500">{slot.label}</div>
+                {rows.map((task) => {
+                  const isLate = !task.done && task.date < today;
+                  return (
+                    <div key={task.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+                      <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => toggleDone(task.id)}>
+                        <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${task.done ? "border-emerald-500 bg-emerald-50 text-emerald-600" : "bg-white"}`}>
+                          {task.done ? <Check className="h-4 w-4" /> : null}
+                        </span>
+                        <span className="min-w-0">
+                          <span className={`block truncate font-bold ${task.done ? "text-slate-400 line-through" : ""}`}>{task.title}</span>
+                          <span className="text-sm text-muted-foreground">{new Date(task.date).toLocaleDateString("vi-VN")} · {task.cadence}</span>
+                        </span>
+                      </button>
+                      <div className="flex items-center gap-2">
+                        {isLate && (
+                          <Button size="sm" variant="outline" onClick={() => reschedule(task.id)}>
+                            Xếp lại
+                          </Button>
+                        )}
+                        <Button size="icon" variant="ghost" onClick={() => removeTask(task.id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
         </CardContent>
       </Card>
     </section>
@@ -801,7 +984,7 @@ function CheckInCard() {
   );
 }
 
-function QuickAddDialog({ onSaved, disabled }: { onSaved: () => void; disabled?: boolean }) {
+function QuickAddDialog({ onSaved, disabled, members }: { onSaved: () => void; disabled?: boolean; members: Member[] }) {
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<"expense" | "income">("expense");
   const [amount, setAmount] = useState("");
@@ -809,6 +992,9 @@ function QuickAddDialog({ onSaved, disabled }: { onSaved: () => void; disabled?:
   const [note, setNote] = useState("");
   const [date, setDate] = useState(dateKey());
   const [isShared, setIsShared] = useState(false);
+  const [fundAction, setFundAction] = useState("");
+  const [createSplit, setCreateSplit] = useState(false);
+  const [splitParticipantIds, setSplitParticipantIds] = useState<string[]>(members.map((member) => member.id));
   const [locationName, setLocationName] = useState("");
   const [location, setLocation] = useState<{ latitude: number; longitude: number; accuracy: number } | null>(null);
   const [locating, setLocating] = useState(false);
@@ -817,9 +1003,22 @@ function QuickAddDialog({ onSaved, disabled }: { onSaved: () => void; disabled?:
 
   const categories = type === "expense" ? expenseCategories : incomeCategories;
 
+  useEffect(() => {
+    setSplitParticipantIds(members.map((member) => member.id));
+  }, [members]);
+
   const switchType = (next: "expense" | "income") => {
     setType(next);
     setCategory(next === "expense" ? "food" : "salary");
+    if (next === "income") {
+      setIsShared(false);
+      setFundAction("");
+      setCreateSplit(false);
+    }
+  };
+
+  const toggleSplitMember = (id: string) => {
+    setSplitParticipantIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
   };
 
   const classify = (value: string) => {
@@ -871,6 +1070,8 @@ function QuickAddDialog({ onSaved, disabled }: { onSaved: () => void; disabled?:
           category,
           note,
           isShared,
+          fundAction: isShared ? fundAction || null : null,
+          splitParticipantIds: isShared && createSplit ? splitParticipantIds : null,
           date,
           latitude: location?.latitude,
           longitude: location?.longitude,
@@ -882,6 +1083,8 @@ function QuickAddDialog({ onSaved, disabled }: { onSaved: () => void; disabled?:
       setAmount("");
       setNote("");
       setIsShared(false);
+      setFundAction("");
+      setCreateSplit(false);
       setLocation(null);
       setLocationName("");
       onSaved();
@@ -900,7 +1103,7 @@ function QuickAddDialog({ onSaved, disabled }: { onSaved: () => void; disabled?:
           <span className="hidden sm:inline">Thêm giao dịch</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[92vh] overflow-y-auto">
+      <DialogContent className="top-[48%] max-h-[82dvh] gap-3 overflow-y-auto p-4 sm:max-h-[88vh] sm:p-5">
         <DialogHeader>
           <DialogTitle>Thêm giao dịch</DialogTitle>
           <DialogDescription>Lưu khoản thu chi, phân loại và vị trí check-in.</DialogDescription>
@@ -910,7 +1113,7 @@ function QuickAddDialog({ onSaved, disabled }: { onSaved: () => void; disabled?:
             <button className={`rounded px-3 py-2 text-sm font-bold ${type === "expense" ? "bg-white shadow-sm" : ""}`} onClick={() => switchType("expense")}>Chi tiêu</button>
             <button className={`rounded px-3 py-2 text-sm font-bold ${type === "income" ? "bg-white shadow-sm" : ""}`} onClick={() => switchType("income")}>Thu nhập</button>
           </div>
-          <Input placeholder="500000, 500k, 1.2m" value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" />
+          <Input placeholder="500000, 500k, 1.2m" value={amount} onChange={(event) => setAmount(formatAmountInput(event.target.value))} inputMode="decimal" />
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {categories.map((cat) => (
               <button
@@ -940,10 +1143,35 @@ function QuickAddDialog({ onSaved, disabled }: { onSaved: () => void; disabled?:
             <Input className="mt-3" placeholder="Tên nơi" value={locationName} onChange={(event) => setLocationName(event.target.value)} />
           </div>
           {type === "expense" && (
-            <label className="flex items-center gap-3 text-sm font-semibold">
-              <input type="checkbox" checked={isShared} onChange={(event) => setIsShared(event.target.checked)} />
-              Chi phí chung
-            </label>
+            <div className="grid gap-3 rounded-md border bg-white p-3">
+              <label className="flex items-center gap-3 text-sm font-semibold">
+                <input type="checkbox" checked={isShared} onChange={(event) => setIsShared(event.target.checked)} />
+                Chi phí chung
+              </label>
+              {isShared && (
+                <>
+                  <select className="input-like" value={fundAction} onChange={(event) => setFundAction(event.target.value)}>
+                    <option value="">Chỉ đánh dấu chung</option>
+                    <option value="withdraw">Trừ quỹ chung</option>
+                    <option value="deposit">Ghi nhận nạp quỹ</option>
+                  </select>
+                  <label className="flex items-center gap-3 text-sm font-semibold">
+                    <input type="checkbox" checked={createSplit} onChange={(event) => setCreateSplit(event.target.checked)} />
+                    Tạo chia tiền/công nợ
+                  </label>
+                  {createSplit && (
+                    <div className="grid max-h-36 gap-2 overflow-y-auto pr-1">
+                      {members.map((member) => (
+                        <label key={member.id} className="flex items-center justify-between rounded-md border bg-slate-50 px-3 py-2 text-sm font-semibold">
+                          <span>{member.name || member.email}</span>
+                          <input type="checkbox" checked={splitParticipantIds.includes(member.id)} onChange={() => toggleSplitMember(member.id)} />
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           )}
           {error && <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">{error}</div>}
           <Button className="w-full" onClick={save} disabled={saving}>
