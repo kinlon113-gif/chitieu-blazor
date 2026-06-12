@@ -9,6 +9,8 @@
 
   <ItemGroup>
     <!-- Blazor & ASP.NET Core -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.Facebook" Version="8.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.Google" Version="8.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
 
     <!-- Entity Framework Core + PostgreSQL -->

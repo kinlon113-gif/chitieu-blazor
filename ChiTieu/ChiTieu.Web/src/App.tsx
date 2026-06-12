@@ -4,9 +4,11 @@ import {
   ArrowUpRight,
   BadgeDollarSign,
   Bell,
+  BriefcaseBusiness,
   CalendarDays,
   Check,
   ClipboardList,
+  Clock3,
   CreditCard,
   HandCoins,
   Home,
@@ -20,6 +22,7 @@ import {
   Search,
   Settings,
   Split,
+  Target,
   Trash2,
   Users,
   WalletCards,
@@ -31,10 +34,12 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input } from "@/components/ui/input";
 import { money } from "@/lib/utils";
 
-type ViewId = "overview" | "transactions" | "budget" | "fund" | "debts" | "reports" | "split" | "groups" | "tasks" | "settings";
+type ViewId = "overview" | "transactions" | "budget" | "fund" | "debts" | "reports" | "split" | "groups" | "settings" | "tasks" | "task-board" | "task-calendar";
+type AppMode = "finance" | "work";
 
 type AppState = {
   group: Group | null;
+  groups: Group[];
   members: Member[];
   transactions: Transaction[];
   budgets: Budget[];
@@ -56,6 +61,7 @@ type Transaction = {
   isShared: boolean;
   date: string;
   fromEmail: boolean;
+  userId: string;
   userName: string;
   latitude?: number | null;
   longitude?: number | null;
@@ -79,9 +85,13 @@ type SplitItem = {
 type TaskItem = {
   id: string;
   title: string;
+  description?: string;
   period: "morning" | "afternoon" | "evening";
   cadence: "daily" | "weekly" | "monthly" | "event";
+  priority?: "low" | "normal" | "high";
+  project?: string;
   date: string;
+  time?: string;
   done: boolean;
 };
 type Report = {
@@ -95,6 +105,7 @@ type Report = {
 
 const emptyState: AppState = {
   group: null,
+  groups: [],
   members: [],
   transactions: [],
   budgets: [],
@@ -105,7 +116,7 @@ const emptyState: AppState = {
   report: { income: 0, expense: 0, balance: 0, count: 0, byCategory: {}, byMember: {} },
 };
 
-const navItems: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
+const financeNavItems: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
   { id: "overview", label: "Tổng quan", icon: Home },
   { id: "transactions", label: "Giao dịch", icon: ReceiptText },
   { id: "budget", label: "Ngân sách", icon: PieChart },
@@ -114,9 +125,17 @@ const navItems: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
   { id: "reports", label: "Báo cáo", icon: BadgeDollarSign },
   { id: "split", label: "Chia tiền", icon: Split },
   { id: "groups", label: "Nhóm", icon: Users },
-  { id: "tasks", label: "Lich task", icon: ClipboardList },
   { id: "settings", label: "Cài đặt", icon: Settings },
 ];
+
+const workNavItems: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
+  { id: "tasks", label: "Today", icon: ClipboardList },
+  { id: "task-board", label: "Board", icon: Target },
+  { id: "task-calendar", label: "Calendar", icon: CalendarDays },
+  { id: "settings", label: "Cài đặt", icon: Settings },
+];
+
+const allNavItems = [...financeNavItems, ...workNavItems];
 
 const expenseCategories = [
   { id: "food", label: "Ăn uống" },
@@ -205,6 +224,8 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 
 export default function App() {
   const [activeView, setActiveView] = useState<ViewId>("overview");
+  const [appMode, setAppMode] = useState<AppMode>("finance");
+  const [activeGroupId, setActiveGroupId] = useState<number | null>(null);
   const [state, setState] = useState<AppState>(emptyState);
   const [tasks, setTasks] = useLocalTasks();
   const [month, setMonth] = useState(monthKey());
@@ -214,13 +235,18 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const activeLabel = useMemo(() => navItems.find((item) => item.id === activeView)?.label ?? "Tổng quan", [activeView]);
+  const currentNavItems = appMode === "finance" ? financeNavItems : workNavItems;
+  const activeLabel = useMemo(() => allNavItems.find((item) => item.id === activeView)?.label ?? "Tổng quan", [activeView]);
 
   const load = async () => {
     setLoading(true);
     setMessage("");
     try {
-      setState(await api<AppState>(`/api/app?month=${month}`));
+      const query = new URLSearchParams({ month });
+      if (activeGroupId) query.set("groupId", String(activeGroupId));
+      const nextState = await api<AppState>(`/api/app?${query.toString()}`);
+      setState(nextState);
+      if (!activeGroupId && nextState.group) setActiveGroupId(nextState.group.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Không tải được dữ liệu.");
     } finally {
@@ -230,10 +256,18 @@ export default function App() {
 
   useEffect(() => {
     void load();
-  }, [month]);
+  }, [month, activeGroupId]);
 
   const navigate = (view: ViewId) => {
     setActiveView(view);
+    setMobileMenuOpen(false);
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+  };
+
+  const switchMode = () => {
+    const nextMode: AppMode = appMode === "finance" ? "work" : "finance";
+    setAppMode(nextMode);
+    setActiveView(nextMode === "finance" ? "overview" : "tasks");
     setMobileMenuOpen(false);
     window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
   };
@@ -256,7 +290,7 @@ export default function App() {
           </div>
 
           <nav className="mt-8 space-y-1">
-            {navItems.map((item) => (
+            {currentNavItems.map((item) => (
               <button
                 key={item.id}
                 onClick={() => navigate(item.id)}
@@ -288,6 +322,13 @@ export default function App() {
               <div className="text-sm text-muted-foreground">{state.group?.name ?? "Tài chính nhóm"}</div>
               <h1 className="text-xl font-black tracking-tight">{activeLabel}</h1>
             </div>
+            {state.groups.length > 1 && appMode === "finance" && (
+              <select className="input-like hidden w-44 md:block" value={activeGroupId ?? state.group?.id ?? ""} onChange={(event) => setActiveGroupId(Number(event.target.value))}>
+                {state.groups.map((group) => (
+                  <option key={group.id} value={group.id}>{group.name}</option>
+                ))}
+              </select>
+            )}
             <div className="ml-auto hidden w-full max-w-sm items-center gap-2 rounded-md border bg-white px-3 md:flex">
               <Search className="h-4 w-4 text-muted-foreground" />
               <input
@@ -303,12 +344,15 @@ export default function App() {
             <Button variant="outline" size="icon">
               <Bell className="h-4 w-4" />
             </Button>
-            <QuickAddDialog onSaved={load} disabled={!state.group} members={state.members} />
+            <Button variant={appMode === "work" ? "default" : "outline"} size="icon" onClick={switchMode} title={appMode === "finance" ? "Mở quản lý công việc" : "Quay lại tài chính"}>
+              {appMode === "finance" ? <BriefcaseBusiness className="h-4 w-4" /> : <WalletCards className="h-4 w-4" />}
+            </Button>
+            {appMode === "finance" && <QuickAddDialog onSaved={load} disabled={!state.group} members={state.members} groupId={state.group?.id} />}
           </div>
           {mobileMenuOpen && (
             <div className="container grid gap-2 pb-3 lg:hidden">
               <div className="grid grid-cols-2 gap-2 rounded-md border bg-white p-2 shadow-soft">
-                {navItems.slice(5).map((item) => (
+                {currentNavItems.slice(appMode === "finance" ? 5 : 0).map((item) => (
                   <button
                     key={item.id}
                     onClick={() => navigate(item.id)}
@@ -341,13 +385,13 @@ export default function App() {
                   onDeleted={load}
                 />
               )}
-              {activeView === "budget" && <BudgetView budgets={state.budgets} month={month} setMonth={setMonth} onSaved={load} />}
-              {activeView === "fund" && <FundView state={state} onSaved={load} />}
+              {activeView === "budget" && <BudgetView budgets={state.budgets} month={month} setMonth={setMonth} onSaved={load} groupId={state.group.id} />}
+              {activeView === "fund" && <FundView state={state} onSaved={load} groupId={state.group.id} />}
               {activeView === "debts" && <DebtsView debts={state.debts} onSaved={load} />}
               {activeView === "reports" && <ReportsView report={state.report} month={month} setMonth={setMonth} />}
-              {activeView === "split" && <SplitView splits={state.splits} members={state.members} onSaved={load} />}
-              {activeView === "groups" && <GroupsView group={state.group} members={state.members} />}
-              {activeView === "tasks" && <TasksView tasks={tasks} setTasks={setTasks} />}
+              {activeView === "split" && <SplitView splits={state.splits} members={state.members} onSaved={load} groupId={state.group.id} />}
+              {activeView === "groups" && <GroupsView state={state} month={month} activeGroupId={state.group.id} onSaved={load} onSelectGroup={setActiveGroupId} />}
+              {(activeView === "tasks" || activeView === "task-board" || activeView === "task-calendar") && <TasksView tasks={tasks} setTasks={setTasks} view={activeView} />}
               {activeView === "settings" && <SettingsView />}
             </>
           )}
@@ -356,7 +400,7 @@ export default function App() {
 
       <nav className="mobile-safe fixed bottom-0 left-0 right-0 z-40 border-t bg-white/95 px-3 py-2 backdrop-blur-xl lg:hidden">
         <div className="grid grid-cols-5 gap-1">
-          {navItems.slice(0, 5).map((item) => (
+          {currentNavItems.slice(0, 5).map((item) => (
             <button
               key={item.id}
               onClick={() => navigate(item.id)}
@@ -435,7 +479,7 @@ function TransactionsView(props: {
   );
 }
 
-function BudgetView({ budgets, month, setMonth, onSaved }: { budgets: Budget[]; month: string; setMonth: (month: string) => void; onSaved: () => void }) {
+function BudgetView({ budgets, month, setMonth, onSaved, groupId }: { budgets: Budget[]; month: string; setMonth: (month: string) => void; onSaved: () => void; groupId: number }) {
   const [categoryId, setCategoryId] = useState("food");
   const [amount, setAmount] = useState("");
   const [saving, setSaving] = useState(false);
@@ -447,7 +491,7 @@ function BudgetView({ budgets, month, setMonth, onSaved }: { budgets: Budget[]; 
     if (value <= 0) return setError("Số tiền ngân sách chưa hợp lệ.");
     setSaving(true);
     try {
-      await api<void>("/api/budgets", { method: "POST", body: JSON.stringify({ categoryId, month, amount: value }) });
+      await api<void>("/api/budgets", { method: "POST", body: JSON.stringify({ groupId, categoryId, month, amount: value }) });
       setAmount("");
       onSaved();
     } catch (err) {
@@ -488,7 +532,7 @@ function BudgetView({ budgets, month, setMonth, onSaved }: { budgets: Budget[]; 
   );
 }
 
-function FundView({ state, onSaved }: { state: AppState; onSaved: () => void }) {
+function FundView({ state, onSaved, groupId }: { state: AppState; onSaved: () => void; groupId: number }) {
   const [type, setType] = useState("deposit");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -496,7 +540,7 @@ function FundView({ state, onSaved }: { state: AppState; onSaved: () => void }) 
   const save = async () => {
     const value = parseAmount(amount);
     if (value <= 0) return;
-    await api<void>("/api/fund-transactions", { method: "POST", body: JSON.stringify({ type, amount: value, note }) });
+    await api<void>("/api/fund-transactions", { method: "POST", body: JSON.stringify({ groupId, type, amount: value, note }) });
     setAmount("");
     setNote("");
     onSaved();
@@ -600,7 +644,7 @@ function ReportsView({ report, month, setMonth }: { report: Report; month: strin
   );
 }
 
-function SplitView({ splits, members, onSaved }: { splits: SplitItem[]; members: Member[]; onSaved: () => void }) {
+function SplitView({ splits, members, onSaved, groupId }: { splits: SplitItem[]; members: Member[]; onSaved: () => void; groupId: number }) {
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [participantIds, setParticipantIds] = useState<string[]>(members.map((member) => member.id));
@@ -624,7 +668,7 @@ function SplitView({ splits, members, onSaved }: { splits: SplitItem[]; members:
     try {
       await api<void>("/api/splits", {
         method: "POST",
-        body: JSON.stringify({ totalAmount, description, participantIds }),
+        body: JSON.stringify({ groupId, totalAmount, description, participantIds }),
       });
       setAmount("");
       setDescription("");
@@ -687,46 +731,138 @@ function SplitView({ splits, members, onSaved }: { splits: SplitItem[]; members:
   );
 }
 
-function GroupsView({ group, members }: { group: Group; members: Member[] }) {
+function GroupsView({
+  state,
+  month,
+  activeGroupId,
+  onSaved,
+  onSelectGroup,
+}: {
+  state: AppState;
+  month: string;
+  activeGroupId: number;
+  onSaved: () => void;
+  onSelectGroup: (id: number) => void;
+}) {
+  const [selectedMemberId, setSelectedMemberId] = useState(state.members[0]?.id ?? "");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [saving, setSaving] = useState(false);
+  const selectedMember = state.members.find((member) => member.id === selectedMemberId) ?? state.members[0];
+  const memberTransactions = selectedMember ? state.transactions.filter((tx) => tx.userId === selectedMember.id) : [];
+  const memberIncome = memberTransactions.filter((tx) => tx.type === "income").reduce((sum, tx) => sum + tx.amount, 0);
+  const memberExpense = memberTransactions.filter((tx) => tx.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
+
+  useEffect(() => {
+    if (!selectedMemberId && state.members[0]) setSelectedMemberId(state.members[0].id);
+  }, [selectedMemberId, state.members]);
+
+  const createGroup = async () => {
+    if (!name.trim()) return;
+    setSaving(true);
+    try {
+      const group = await api<Group>("/api/groups", { method: "POST", body: JSON.stringify({ name, description }) });
+      setName("");
+      setDescription("");
+      onSelectGroup(group.id);
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <section className="grid gap-5 lg:grid-cols-[1fr_0.75fr]">
+    <section className="grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
       <Card className="overflow-hidden">
         <CardHeader>
-          <CardTitle>{group.name}</CardTitle>
-          <CardDescription>{group.description || "Nhóm chi tiêu"}</CardDescription>
+          <CardTitle>Nhóm</CardTitle>
+          <CardDescription>Chọn nhóm, tạo nhóm mới và xem riêng thu chi từng thành viên.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {members.map((member) => (
-            <div key={member.id} className="flex items-center justify-between border-t px-5 py-4">
-              <div className="flex items-center gap-3">
-                <div className="grid h-10 w-10 place-items-center rounded-full bg-blue-50 font-black text-blue-600">{member.name?.[0] ?? "U"}</div>
-                <div>
-                  <div className="font-bold">{member.name || member.email}</div>
-                  <div className="text-sm text-muted-foreground">{member.role === "owner" ? "Chủ nhóm" : "Thành viên"}</div>
-                </div>
+          {state.groups.map((group) => (
+            <button key={group.id} className={`flex w-full items-center justify-between gap-3 border-t px-5 py-4 text-left ${group.id === activeGroupId ? "bg-blue-50" : "bg-white"}`} onClick={() => onSelectGroup(group.id)}>
+              <div>
+                <div className="font-black">{group.name}</div>
+                <div className="text-sm text-muted-foreground">{group.description || "Nhóm chi tiêu"}</div>
               </div>
-              <div className="font-black">{money(member.spent)}</div>
-            </div>
+              <Badge variant={group.id === activeGroupId ? "default" : "secondary"}>{group.inviteCode}</Badge>
+            </button>
           ))}
         </CardContent>
       </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Mã mời</CardTitle>
-          <CardDescription>Chia sẻ mã này cho thành viên mới.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="rounded-md border bg-slate-50 p-4 text-center text-2xl font-black tracking-[0.3em] text-blue-600">{group.inviteCode}</div>
-        </CardContent>
-      </Card>
+
+      <section className="grid gap-5">
+        <Card>
+          <CardHeader>
+            <CardTitle>Tạo nhóm mới</CardTitle>
+            <CardDescription>Chủ động tạo thêm nhóm cho nhà, chuyến đi, dự án hoặc quỹ riêng.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+            <Input placeholder="Tên nhóm" value={name} onChange={(event) => setName(event.target.value)} />
+            <Input placeholder="Mô tả" value={description} onChange={(event) => setDescription(event.target.value)} />
+            <Button onClick={createGroup} disabled={saving || !name.trim()}>
+              <Users className="h-4 w-4" />
+              Tạo nhóm
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>{state.group?.name}</CardTitle>
+            <CardDescription>Tháng {month} · mã mời {state.group?.inviteCode}</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-[0.85fr_1.15fr]">
+            <div className="grid gap-2">
+              {state.members.map((member) => (
+                <button key={member.id} className={`flex items-center justify-between rounded-md border px-3 py-2 text-left ${selectedMember?.id === member.id ? "border-blue-500 bg-blue-50" : "bg-white"}`} onClick={() => setSelectedMemberId(member.id)}>
+                  <span className="flex items-center gap-3">
+                    <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-50 font-black text-blue-600">{member.name?.[0] ?? "U"}</span>
+                    <span>
+                      <span className="block font-bold">{member.name || member.email}</span>
+                      <span className="text-xs text-muted-foreground">{member.role === "owner" ? "Chủ nhóm" : "Thành viên"}</span>
+                    </span>
+                  </span>
+                  <strong>{money(member.spent)}</strong>
+                </button>
+              ))}
+            </div>
+            <div className="rounded-md border bg-slate-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-black">{selectedMember?.name || selectedMember?.email || "Thành viên"}</div>
+                  <div className="text-sm text-muted-foreground">Thu {money(memberIncome)} · Chi {money(memberExpense)}</div>
+                </div>
+                <Badge variant={memberExpense > memberIncome ? "danger" : "success"}>{money(memberIncome - memberExpense)}</Badge>
+              </div>
+              <div className="mt-4 divide-y rounded-md border bg-white">
+                {memberTransactions.length === 0 ? <EmptyRows text="Chưa có giao dịch của thành viên này." /> : null}
+                {memberTransactions.slice(0, 8).map((tx) => (
+                  <div key={tx.id} className="flex items-center justify-between gap-3 px-3 py-3">
+                    <div className="min-w-0">
+                      <div className="truncate font-bold">{tx.note || labelOf(tx.category)}</div>
+                      <div className="text-xs text-muted-foreground">{labelOf(tx.category)} · {new Date(tx.date).toLocaleDateString("vi-VN")}</div>
+                    </div>
+                    <strong className={tx.type === "income" ? "text-emerald-600" : "text-red-600"}>{tx.type === "income" ? "+" : "-"}{money(tx.amount)}</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
     </section>
   );
 }
 
-function TasksView({ tasks, setTasks }: { tasks: TaskItem[]; setTasks: Dispatch<SetStateAction<TaskItem[]>> }) {
+function TasksView({ tasks, setTasks, view }: { tasks: TaskItem[]; setTasks: Dispatch<SetStateAction<TaskItem[]>>; view: ViewId }) {
   const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [period, setPeriod] = useState<TaskItem["period"]>("morning");
   const [cadence, setCadence] = useState<TaskItem["cadence"]>("daily");
+  const [priority, setPriority] = useState<TaskItem["priority"]>("normal");
+  const [project, setProject] = useState("");
+  const [time, setTime] = useState("");
   const [date, setDate] = useState(dateKey());
 
   const periods: Array<{ id: TaskItem["period"]; label: string }> = [
@@ -741,9 +877,12 @@ function TasksView({ tasks, setTasks }: { tasks: TaskItem[]; setTasks: Dispatch<
     if (!cleanTitle) return;
     setTasks((current) => [
       ...current,
-      { id: crypto.randomUUID(), title: cleanTitle, period, cadence, date, done: false },
+      { id: crypto.randomUUID(), title: cleanTitle, description, period, cadence, priority, project, date, time, done: false },
     ]);
     setTitle("");
+    setDescription("");
+    setProject("");
+    setTime("");
   };
 
   const toggleDone = (id: string) => {
@@ -770,6 +909,11 @@ function TasksView({ tasks, setTasks }: { tasks: TaskItem[]; setTasks: Dispatch<
         </CardHeader>
         <CardContent className="grid gap-3">
           <Input placeholder="Tên công việc hoặc sự kiện" value={title} onChange={(event) => setTitle(event.target.value)} />
+          <Input placeholder="Mô tả ngắn" value={description} onChange={(event) => setDescription(event.target.value)} />
+          <div className="grid grid-cols-2 gap-2">
+            <Input placeholder="Dự án / nhóm việc" value={project} onChange={(event) => setProject(event.target.value)} />
+            <Input type="time" value={time} onChange={(event) => setTime(event.target.value)} />
+          </div>
           <div className="grid grid-cols-3 gap-2">
             {periods.map((item) => (
               <button
@@ -984,7 +1128,7 @@ function CheckInCard() {
   );
 }
 
-function QuickAddDialog({ onSaved, disabled, members }: { onSaved: () => void; disabled?: boolean; members: Member[] }) {
+function QuickAddDialog({ onSaved, disabled, members, groupId }: { onSaved: () => void; disabled?: boolean; members: Member[]; groupId?: number }) {
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<"expense" | "income">("expense");
   const [amount, setAmount] = useState("");
@@ -1065,6 +1209,7 @@ function QuickAddDialog({ onSaved, disabled, members }: { onSaved: () => void; d
       await api<void>("/api/transactions", {
         method: "POST",
         body: JSON.stringify({
+          groupId,
           type,
           amount: value,
           category,

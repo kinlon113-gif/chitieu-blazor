@@ -3,6 +3,7 @@ using ChiTieu.Data;
 using ChiTieu.Data.Entities;
 using ChiTieu.Services;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
 using MudBlazor.Services;
@@ -46,6 +47,33 @@ builder.Services.AddIdentity<AppUser, IdentityRole>(options =>
 })
 .AddEntityFrameworkStores<AppDbContext>()
 .AddDefaultTokenProviders();
+
+var configuredExternalProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+var authenticationBuilder = builder.Services.AddAuthentication();
+var googleClientId = builder.Configuration["Authentication:Google:ClientId"] ?? Environment.GetEnvironmentVariable("GOOGLE_CLIENT_ID");
+var googleClientSecret = builder.Configuration["Authentication:Google:ClientSecret"] ?? Environment.GetEnvironmentVariable("GOOGLE_CLIENT_SECRET");
+if (!string.IsNullOrWhiteSpace(googleClientId) && !string.IsNullOrWhiteSpace(googleClientSecret))
+{
+    authenticationBuilder.AddGoogle(options =>
+    {
+        options.ClientId = googleClientId;
+        options.ClientSecret = googleClientSecret;
+    });
+    configuredExternalProviders.Add("Google");
+}
+
+var facebookAppId = builder.Configuration["Authentication:Facebook:AppId"] ?? Environment.GetEnvironmentVariable("FACEBOOK_APP_ID");
+var facebookAppSecret = builder.Configuration["Authentication:Facebook:AppSecret"] ?? Environment.GetEnvironmentVariable("FACEBOOK_APP_SECRET");
+if (!string.IsNullOrWhiteSpace(facebookAppId) && !string.IsNullOrWhiteSpace(facebookAppSecret))
+{
+    authenticationBuilder.AddFacebook(options =>
+    {
+        options.AppId = facebookAppId;
+        options.AppSecret = facebookAppSecret;
+        options.Fields.Add("email");
+    });
+    configuredExternalProviders.Add("Facebook");
+}
 
 builder.Services.ConfigureApplicationCookie(options =>
 {
@@ -142,6 +170,16 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseForwardedHeaders();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.Equals("/react/index.html", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.Redirect("/react/home", permanent: false);
+        return;
+    }
+
+    await next();
+});
 app.UseStaticFiles();
 app.UseRouting();
 app.UseCors();
@@ -155,13 +193,35 @@ static string AccountPage(string title, string body)
 <html lang="vi">
 <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
     <title>{{title}} - Chi Tieu</title>
     <link rel="stylesheet" href="/css/app.css" />
+    <style>
+      body{margin:0;background:#f4f7fb;color:#111827;font-family:Inter,system-ui,sans-serif}
+      .auth-shell{min-height:100vh;display:grid;place-items:center;padding:20px;background:linear-gradient(135deg,#eff6ff 0%,#f8fafc 48%,#ecfdf5 100%)}
+      .auth-card{width:min(440px,100%);border:1px solid #dbe4ef;background:rgba(255,255,255,.94);box-shadow:0 22px 60px rgba(15,23,42,.14);border-radius:18px;padding:26px}
+      .auth-brand{display:flex;align-items:center;gap:12px;margin-bottom:22px}
+      .auth-logo{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:#0f172a;color:#fff;font-weight:900}
+      .auth-title{font-size:24px;font-weight:900;letter-spacing:0;margin:0}
+      .auth-sub{color:#64748b;margin:4px 0 0}
+      .auth-form{display:grid;gap:13px}
+      .auth-input{width:100%;min-height:46px;border:1px solid #cbd5e1;border-radius:10px;padding:0 13px;font-size:16px;outline:none}
+      .auth-input:focus{border-color:#2563eb;box-shadow:0 0 0 4px rgba(37,99,235,.14)}
+      .auth-label{font-size:13px;font-weight:700;color:#475569}
+      .auth-btn{min-height:46px;border:0;border-radius:10px;font-size:15px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}
+      .auth-primary{background:#2563eb;color:white;box-shadow:0 10px 22px rgba(37,99,235,.25)}
+      .auth-social{background:white;color:#0f172a;border:1px solid #cbd5e1}
+      .auth-social-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
+      .auth-divider{display:flex;align-items:center;gap:10px;color:#94a3b8;font-size:12px;font-weight:700;text-transform:uppercase}
+      .auth-divider:before,.auth-divider:after{content:"";height:1px;background:#e2e8f0;flex:1}
+      .auth-foot{margin-top:16px;color:#64748b}
+      .auth-foot a{font-weight:800;color:#2563eb;text-decoration:none}
+      @media(max-width:460px){.auth-card{padding:20px;border-radius:14px}.auth-social-row{grid-template-columns:1fr} }
+    </style>
 </head>
 <body>
-    <main style="min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--bg);">
-        <section class="card" style="width:min(420px,100%);padding:28px;">
+    <main class="auth-shell">
+        <section class="auth-card">
             {{body}}
         </section>
     </main>
@@ -175,23 +235,27 @@ static bool IsLocalReturnUrl(string? returnUrl)
 
 app.MapGet("/account/login", (string? returnUrl) =>
 {
-    var encodedReturnUrl = System.Net.WebUtility.HtmlEncode(returnUrl ?? "/dashboard");
+    var encodedReturnUrl = System.Net.WebUtility.HtmlEncode(returnUrl ?? "/react/home");
     var html = AccountPage("Dang nhap", $$"""
-<h1 class="page-title" style="margin-bottom:8px">Dang nhap</h1>
-<p class="page-sub" style="margin-bottom:20px">Vao Chi Tieu de quan ly thu chi.</p>
-<form method="post" action="/account/login" style="display:grid;gap:14px">
+<div class="auth-brand"><div class="auth-logo">đ</div><div><h1 class="auth-title">Chi Tieu Money</h1><p class="auth-sub">Tai chinh va cong viec trong mot workspace.</p></div></div>
+<div class="auth-social-row">
+  <form method="post" action="/account/external-login"><input type="hidden" name="provider" value="Google" /><input type="hidden" name="returnUrl" value="{{encodedReturnUrl}}" /><button class="auth-btn auth-social" type="submit">G Google</button></form>
+  <form method="post" action="/account/external-login"><input type="hidden" name="provider" value="Facebook" /><input type="hidden" name="returnUrl" value="{{encodedReturnUrl}}" /><button class="auth-btn auth-social" type="submit">f Facebook</button></form>
+</div>
+<div class="auth-divider">hoac email</div>
+<form method="post" action="/account/login" class="auth-form">
     <input type="hidden" name="returnUrl" value="{{encodedReturnUrl}}" />
-    <div class="input-group">
-        <label class="input-label">Email</label>
-        <input class="input" type="email" name="email" autocomplete="email" required />
+    <div>
+        <label class="auth-label">Email</label>
+        <input class="auth-input" type="email" name="email" autocomplete="email" required />
     </div>
-    <div class="input-group">
-        <label class="input-label">Mat khau</label>
-        <input class="input" type="password" name="password" autocomplete="current-password" required />
+    <div>
+        <label class="auth-label">Mat khau</label>
+        <input class="auth-input" type="password" name="password" autocomplete="current-password" required />
     </div>
-    <button class="btn btn-primary btn-block" type="submit">Dang nhap</button>
+    <button class="auth-btn auth-primary" type="submit">Dang nhap</button>
 </form>
-<p style="margin-top:16px;color:var(--text-2)">Chua co tai khoan? <a href="/account/register">Dang ky</a></p>
+<p class="auth-foot">Chua co tai khoan? <a href="/account/register">Dang ky</a></p>
 """);
     return Results.Content(html, "text/html; charset=utf-8");
 });
@@ -221,7 +285,7 @@ app.MapPost("/account/login", async (
         var result = await signInManager.PasswordSignInAsync(user, password, isPersistent: true, lockoutOnFailure: false);
         if (result.Succeeded)
         {
-            return Results.Redirect(IsLocalReturnUrl(returnUrl) ? returnUrl : "/dashboard");
+            return Results.Redirect(IsLocalReturnUrl(returnUrl) ? returnUrl : "/react/home");
         }
 
         logger.LogWarning(
@@ -243,24 +307,28 @@ app.MapPost("/account/login", async (
 app.MapGet("/account/register", () =>
 {
     var html = AccountPage("Dang ky", """
-<h1 class="page-title" style="margin-bottom:8px">Dang ky</h1>
-<p class="page-sub" style="margin-bottom:20px">Tao tai khoan moi de bat dau.</p>
-<form method="post" action="/account/register" style="display:grid;gap:14px">
-    <div class="input-group">
-        <label class="input-label">Ten hien thi</label>
-        <input class="input" name="displayName" autocomplete="name" required />
+<div class="auth-brand"><div class="auth-logo">đ</div><div><h1 class="auth-title">Tao tai khoan</h1><p class="auth-sub">Bat dau quan ly nhom, quy va task.</p></div></div>
+<div class="auth-social-row">
+  <form method="post" action="/account/external-login"><input type="hidden" name="provider" value="Google" /><input type="hidden" name="returnUrl" value="/react/home" /><button class="auth-btn auth-social" type="submit">G Google</button></form>
+  <form method="post" action="/account/external-login"><input type="hidden" name="provider" value="Facebook" /><input type="hidden" name="returnUrl" value="/react/home" /><button class="auth-btn auth-social" type="submit">f Facebook</button></form>
+</div>
+<div class="auth-divider">hoac email</div>
+<form method="post" action="/account/register" class="auth-form">
+    <div>
+        <label class="auth-label">Ten hien thi</label>
+        <input class="auth-input" name="displayName" autocomplete="name" required />
     </div>
-    <div class="input-group">
-        <label class="input-label">Email</label>
-        <input class="input" type="email" name="email" autocomplete="email" required />
+    <div>
+        <label class="auth-label">Email</label>
+        <input class="auth-input" type="email" name="email" autocomplete="email" required />
     </div>
-    <div class="input-group">
-        <label class="input-label">Mat khau</label>
-        <input class="input" type="password" name="password" autocomplete="new-password" required />
+    <div>
+        <label class="auth-label">Mat khau</label>
+        <input class="auth-input" type="password" name="password" autocomplete="new-password" required />
     </div>
-    <button class="btn btn-primary btn-block" type="submit">Dang ky</button>
+    <button class="auth-btn auth-primary" type="submit">Dang ky</button>
 </form>
-<p style="margin-top:16px;color:var(--text-2)">Da co tai khoan? <a href="/account/login">Dang nhap</a></p>
+<p class="auth-foot">Da co tai khoan? <a href="/account/login">Dang nhap</a></p>
 """);
     return Results.Content(html, "text/html; charset=utf-8");
 });
@@ -329,7 +397,7 @@ app.MapPost("/account/register", async (
 
             logger.LogWarning("Reset password for existing account {Email} from register form", email);
             await signInManager.SignInAsync(existingUser, isPersistent: true);
-            return Results.Redirect("/dashboard");
+            return Results.Redirect("/react/home");
         }
 
         var user = new AppUser
@@ -351,7 +419,7 @@ app.MapPost("/account/register", async (
         }
 
         await signInManager.SignInAsync(user, isPersistent: true);
-        return Results.Redirect("/dashboard");
+        return Results.Redirect("/react/home");
     }
     catch (Exception ex)
     {
@@ -366,9 +434,75 @@ app.MapPost("/account/logout", async (SignInManager<AppUser> signInManager) =>
     return Results.Redirect("/account/login");
 });
 
-app.MapGet("/", () => Results.Redirect("/dashboard"));
+app.MapPost("/account/external-login", async (
+    HttpContext http,
+    SignInManager<AppUser> signInManager) =>
+{
+    var form = await http.Request.ReadFormAsync();
+    var provider = form["provider"].ToString();
+    var returnUrl = form["returnUrl"].ToString();
+    if (!configuredExternalProviders.Contains(provider))
+    {
+        return Results.Redirect("/account/login?external=not_configured");
+    }
+
+    var redirectUrl = $"/account/external-callback?returnUrl={Uri.EscapeDataString(IsLocalReturnUrl(returnUrl) ? returnUrl : "/react/home")}";
+    var properties = signInManager.ConfigureExternalAuthenticationProperties(provider, redirectUrl);
+    return Results.Challenge(properties, new[] { provider });
+});
+
+app.MapGet("/account/external-callback", async (
+    string? returnUrl,
+    SignInManager<AppUser> signInManager,
+    UserManager<AppUser> userManager,
+    ILogger<Program> logger) =>
+{
+    var info = await signInManager.GetExternalLoginInfoAsync();
+    if (info == null) return Results.Redirect("/account/login?external=failed");
+
+    var result = await signInManager.ExternalLoginSignInAsync(info.LoginProvider, info.ProviderKey, isPersistent: true, bypassTwoFactor: true);
+    if (result.Succeeded) return Results.Redirect(IsLocalReturnUrl(returnUrl) ? returnUrl! : "/react/home");
+
+    var email = info.Principal.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+    if (string.IsNullOrWhiteSpace(email))
+    {
+        logger.LogWarning("External login failed because provider {Provider} did not return email", info.LoginProvider);
+        return Results.Redirect("/account/login?external=no_email");
+    }
+
+    var user = await userManager.FindByEmailAsync(email);
+    if (user == null)
+    {
+        user = new AppUser
+        {
+            UserName = email,
+            Email = email,
+            DisplayName = info.Principal.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? email
+        };
+        var create = await userManager.CreateAsync(user);
+        if (!create.Succeeded)
+        {
+            logger.LogWarning("External user create failed for {Email}: {Errors}", email, string.Join(", ", create.Errors.Select(e => e.Description)));
+            return Results.Redirect("/account/login?external=create_failed");
+        }
+    }
+
+    var addLogin = await userManager.AddLoginAsync(user, info);
+    if (!addLogin.Succeeded && !addLogin.Errors.Any(e => e.Code == "LoginAlreadyAssociated"))
+    {
+        logger.LogWarning("Add external login failed for {Email}: {Errors}", email, string.Join(", ", addLogin.Errors.Select(e => e.Description)));
+        return Results.Redirect("/account/login?external=link_failed");
+    }
+
+    await signInManager.SignInAsync(user, isPersistent: true);
+    return Results.Redirect(IsLocalReturnUrl(returnUrl) ? returnUrl! : "/react/home");
+});
+
+app.MapGet("/", () => Results.Redirect("/react/home"));
+app.MapGet("/dashboard", () => Results.Redirect("/react/home"));
 app.MapGet("/healthz", () => Results.Ok("OK"));
-app.MapGet("/react", () => Results.Redirect("/react/index.html"));
+app.MapGet("/react", () => Results.Redirect("/react/home"));
+app.MapGet("/react/home", (IWebHostEnvironment env) => Results.File(Path.Combine(env.WebRootPath, "react", "index.html"), "text/html"));
 
 var api = app.MapGroup("/api").RequireAuthorization();
 
@@ -380,18 +514,20 @@ api.MapGet("/app", async (
     DebtService debtService,
     SplitBillService splitService,
     AppDbContext db,
-    string? month) =>
+    string? month,
+    int? groupId) =>
 {
     var userId = GetCurrentUserId(http);
     if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
 
     var monthKey = NormalizeMonth(month);
     var groups = await groupService.GetUserGroupsAsync(userId);
-    var group = groups.FirstOrDefault();
+    var group = groupId.HasValue ? groups.FirstOrDefault(g => g.Id == groupId.Value) : groups.FirstOrDefault();
     if (group == null)
     {
         return Results.Ok(new AppStateResponse(
             null,
+            groups.Select(g => new GroupResponse(g.Id, g.Name, g.Description, g.InviteCode)).ToList(),
             Array.Empty<MemberResponse>(),
             Array.Empty<TransactionResponse>(),
             Array.Empty<BudgetResponse>(),
@@ -422,6 +558,7 @@ api.MapGet("/app", async (
 
     return Results.Ok(new AppStateResponse(
         new GroupResponse(group.Id, group.Name, group.Description, group.InviteCode),
+        groups.Select(g => new GroupResponse(g.Id, g.Name, g.Description, g.InviteCode)).ToList(),
         group.Members.Select(m => new MemberResponse(
             m.UserId,
             m.User.DisplayName,
@@ -503,7 +640,8 @@ api.MapPost("/transactions", async (
     var userId = GetCurrentUserId(http);
     if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
 
-    var group = (await groupService.GetUserGroupsAsync(userId)).FirstOrDefault();
+    var userGroups = await groupService.GetUserGroupsAsync(userId);
+    var group = request.GroupId.HasValue ? userGroups.FirstOrDefault(g => g.Id == request.GroupId.Value) : userGroups.FirstOrDefault();
     if (group == null) return Results.BadRequest(new { message = "Bạn cần tạo hoặc tham gia nhóm trước." });
 
     if (request.Amount <= 0) return Results.BadRequest(new { message = "Số tiền chưa hợp lệ." });
@@ -581,7 +719,8 @@ api.MapPost("/budgets", async (
 {
     var userId = GetCurrentUserId(http);
     if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
-    var group = (await groupService.GetUserGroupsAsync(userId)).FirstOrDefault();
+    var userGroups = await groupService.GetUserGroupsAsync(userId);
+    var group = request.GroupId.HasValue ? userGroups.FirstOrDefault(g => g.Id == request.GroupId.Value) : userGroups.FirstOrDefault();
     if (group == null) return Results.BadRequest(new { message = "Bạn cần tạo hoặc tham gia nhóm trước." });
     if (request.Amount <= 0) return Results.BadRequest(new { message = "Số tiền ngân sách chưa hợp lệ." });
 
@@ -615,7 +754,8 @@ api.MapPost("/fund-transactions", async (
 {
     var userId = GetCurrentUserId(http);
     if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
-    var group = (await groupService.GetUserGroupsAsync(userId)).FirstOrDefault();
+    var userGroups = await groupService.GetUserGroupsAsync(userId);
+    var group = request.GroupId.HasValue ? userGroups.FirstOrDefault(g => g.Id == request.GroupId.Value) : userGroups.FirstOrDefault();
     if (group == null) return Results.BadRequest(new { message = "Bạn cần tạo hoặc tham gia nhóm trước." });
     if (request.Amount <= 0) return Results.BadRequest(new { message = "Số tiền quỹ chưa hợp lệ." });
 
@@ -643,7 +783,8 @@ api.MapPost("/splits", async (
 {
     var userId = GetCurrentUserId(http);
     if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
-    var group = (await groupService.GetUserGroupsAsync(userId)).FirstOrDefault();
+    var userGroups = await groupService.GetUserGroupsAsync(userId);
+    var group = request.GroupId.HasValue ? userGroups.FirstOrDefault(g => g.Id == request.GroupId.Value) : userGroups.FirstOrDefault();
     if (group == null) return Results.BadRequest(new { message = "Bạn cần tạo hoặc tham gia nhóm trước." });
     if (request.TotalAmount <= 0) return Results.BadRequest(new { message = "Số tiền chia chưa hợp lệ." });
 
@@ -903,6 +1044,7 @@ static TransactionResponse ToTransactionResponse(Transaction tx)
 
 record AppStateResponse(
     GroupResponse? Group,
+    IReadOnlyList<GroupResponse> Groups,
     IReadOnlyList<MemberResponse> Members,
     IReadOnlyList<TransactionResponse> Transactions,
     IReadOnlyList<BudgetResponse> Budgets,
@@ -939,6 +1081,7 @@ record SplitResponse(int Id, string Description, decimal TotalAmount, string Spl
 record ReportResponse(decimal Income, decimal Expense, decimal Balance, int Count, Dictionary<string, decimal> ByCategory, Dictionary<string, decimal> ByMember);
 
 record TransactionRequest(
+    int? GroupId,
     string Type,
     decimal Amount,
     string Category,
@@ -953,6 +1096,6 @@ record TransactionRequest(
     string? LocationName);
 record GroupCreateRequest(string? Name, string? Description);
 record GroupJoinRequest(string? InviteCode);
-record BudgetRequest(string CategoryId, string Month, decimal Amount);
-record FundTransactionRequest(string Type, decimal Amount, string? Note);
-record SplitCreateRequest(decimal TotalAmount, string? Description, List<string>? ParticipantIds);
+record BudgetRequest(int? GroupId, string CategoryId, string Month, decimal Amount);
+record FundTransactionRequest(int? GroupId, string Type, decimal Amount, string? Note);
+record SplitCreateRequest(int? GroupId, decimal TotalAmount, string? Description, List<string>? ParticipantIds);
