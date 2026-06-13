@@ -2,13 +2,22 @@
   "name": "Chi Tieu",
   "short_name": "Chi Tieu",
   "description": "Quan ly thu chi ca nhan va nhom.",
-  "start_url": "/dashboard",
+  "id": "/?app=chitieu",
+  "start_url": "/dashboard?source=pwa",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
   "background_color": "#F6F8FC",
   "theme_color": "#2563EB",
   "orientation": "portrait",
+  "prefer_related_applications": false,
   "icons": [
+    {
+      "src": "/icons/app-icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
     {
       "src": "/icons/app-icon-192.png",
       "sizes": "192x192",
