@@ -106,7 +106,7 @@
     {
         if (ActiveGroup == null) return;
         Budgets = await BudgetService.GetByGroupMonthAsync(ActiveGroup.Id, MonthKey);
-        Spending = await TxService.GetExpenseByCategoryAsync(ActiveGroup.Id, MonthKey);
+        Spending = await TxService.GetVisibleExpenseByCategoryAsync(ActiveGroup.Id, MonthKey, UserId);
     }
 
     private async Task OnMonthChanged(ChangeEventArgs e)

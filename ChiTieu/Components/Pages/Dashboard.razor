@@ -146,12 +146,12 @@
 
         if (ActiveGroup == null) return;
 
-        var txs = await TxService.GetByGroupMonthAsync(ActiveGroup.Id, MonthKey);
+        var txs = await TxService.GetVisibleByGroupMonthAsync(ActiveGroup.Id, MonthKey, UserId);
         RecentTxs = txs.Take(8).ToList();
         Income = txs.Where(t => t.Type == "income").Sum(t => t.Amount);
         Expense = txs.Where(t => t.Type == "expense").Sum(t => t.Amount);
         Balance = Income - Expense;
-        CategorySpending = await TxService.GetExpenseByCategoryAsync(ActiveGroup.Id, MonthKey);
+        CategorySpending = await TxService.GetVisibleExpenseByCategoryAsync(ActiveGroup.Id, MonthKey, UserId);
 
         var budgets = await BudgetService.GetByGroupMonthAsync(ActiveGroup.Id, MonthKey);
         BudgetWarnings = budgets

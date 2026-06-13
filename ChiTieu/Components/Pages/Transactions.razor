@@ -238,7 +238,7 @@
     {
         if (ActiveGroup == null) return;
 
-        TransactionList = await TxService.GetByGroupMonthAsync(ActiveGroup.Id, MonthKey);
+        TransactionList = await TxService.GetVisibleByGroupMonthAsync(ActiveGroup.Id, MonthKey, UserId);
         Income = TransactionList.Where(t => t.Type == "income").Sum(t => t.Amount);
         Expense = TransactionList.Where(t => t.Type == "expense").Sum(t => t.Amount);
         ApplyFilter();

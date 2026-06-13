@@ -83,11 +83,11 @@
     private async Task LoadAsync()
     {
         if (ActiveGroup == null) return;
-        Transactions = await TxService.GetByGroupMonthAsync(ActiveGroup.Id, MonthKey);
+        Transactions = await TxService.GetVisibleByGroupMonthAsync(ActiveGroup.Id, MonthKey, UserId);
         Income = Transactions.Where(t => t.Type == "income").Sum(t => t.Amount);
         Expense = Transactions.Where(t => t.Type == "expense").Sum(t => t.Amount);
-        ByCategory = await TxService.GetExpenseByCategoryAsync(ActiveGroup.Id, MonthKey);
-        ByMember = await TxService.GetExpenseByMemberAsync(ActiveGroup.Id, MonthKey);
+        ByCategory = await TxService.GetVisibleExpenseByCategoryAsync(ActiveGroup.Id, MonthKey, UserId);
+        ByMember = await TxService.GetVisibleExpenseByMemberAsync(ActiveGroup.Id, MonthKey, UserId);
     }
 
     private static string Money(decimal value) => $"{value:N0}đ";
@@ -99,4 +99,3 @@
         "education" => "Học tập", "travel" => "Du lịch", _ => "Khác",
     };
 }
-

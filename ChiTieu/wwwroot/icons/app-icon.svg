@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Chi Tieu">
+  <rect width="512" height="512" rx="112" fill="#2563eb"/>
+  <path d="M130 146c0-24.3 19.7-44 44-44h164c24.3 0 44 19.7 44 44v220c0 24.3-19.7 44-44 44H174c-24.3 0-44-19.7-44-44V146z" fill="#ffffff"/>
+  <path d="M174 170h164M174 226h164M174 282h72" stroke="#0f172a" stroke-width="28" stroke-linecap="round"/>
+  <circle cx="310" cy="312" r="72" fill="#14b8a6"/>
+  <path d="M309 268v88M278 294c0-17.7 14.3-30 32-30 16.9 0 31 9.9 31 24.5 0 38.5-65 17.7-65 56.5 0 16 14.3 27 33 27 20 0 34-11.5 34-28" fill="none" stroke="#ffffff" stroke-width="22" stroke-linecap="round"/>
+</svg>

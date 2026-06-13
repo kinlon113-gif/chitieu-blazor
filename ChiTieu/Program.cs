@@ -58,6 +58,7 @@ if (!string.IsNullOrWhiteSpace(googleClientId) && !string.IsNullOrWhiteSpace(goo
     {
         options.ClientId = googleClientId;
         options.ClientSecret = googleClientSecret;
+        options.CallbackPath = "/signin-google";
     });
     configuredExternalProviders.Add("Google");
 }
@@ -70,6 +71,8 @@ if (!string.IsNullOrWhiteSpace(facebookAppId) && !string.IsNullOrWhiteSpace(face
     {
         options.AppId = facebookAppId;
         options.AppSecret = facebookAppSecret;
+        options.CallbackPath = "/signin-facebook";
+        options.Scope.Add("email");
         options.Fields.Add("email");
     });
     configuredExternalProviders.Add("Facebook");
@@ -85,7 +88,9 @@ builder.Services.ConfigureApplicationCookie(options =>
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor
+        | ForwardedHeaders.XForwardedProto
+        | ForwardedHeaders.XForwardedHost;
     options.KnownNetworks.Clear();
     options.KnownProxies.Clear();
 });
@@ -214,6 +219,7 @@ static string AccountPage(string title, string body)
       .auth-social-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
       .auth-divider{display:flex;align-items:center;gap:10px;color:#94a3b8;font-size:12px;font-weight:700;text-transform:uppercase}
       .auth-divider:before,.auth-divider:after{content:"";height:1px;background:#e2e8f0;flex:1}
+      .auth-error{border:1px solid #fecaca;background:#fef2f2;color:#991b1b;border-radius:10px;padding:11px 12px;margin-bottom:14px;font-size:14px;font-weight:700}
       .auth-foot{margin-top:16px;color:#64748b}
       .auth-foot a{font-weight:800;color:#2563eb;text-decoration:none}
       @media(max-width:460px){.auth-card{padding:20px;border-radius:14px}.auth-social-row{grid-template-columns:1fr} }
@@ -233,11 +239,31 @@ static string AccountPage(string title, string body)
 static bool IsLocalReturnUrl(string? returnUrl)
     => !string.IsNullOrWhiteSpace(returnUrl) && returnUrl.StartsWith('/') && !returnUrl.StartsWith("//");
 
-app.MapGet("/account/login", (string? returnUrl) =>
+static string AuthStatusMessage(string? error, string? external)
+{
+    var message = (external ?? error) switch
+    {
+        "not_configured" => "Dang nhap Google/Facebook chua duoc cau hinh tren server deploy.",
+        "failed" => "Dang nhap ben ngoai that bai. Hay kiem tra redirect URL va domain OAuth.",
+        "no_email" => "Tai khoan ben ngoai khong tra ve email. Hay cap quyen email cho ung dung.",
+        "create_failed" => "Khong tao duoc tai khoan tu dang nhap ben ngoai.",
+        "link_failed" => "Khong lien ket duoc tai khoan ben ngoai.",
+        "1" => "Email hoac mat khau chua dung.",
+        _ => string.Empty
+    };
+
+    return string.IsNullOrWhiteSpace(message)
+        ? string.Empty
+        : $"""<div class="auth-error">{System.Net.WebUtility.HtmlEncode(message)}</div>""";
+}
+
+app.MapGet("/account/login", (string? returnUrl, string? error, string? external) =>
 {
     var encodedReturnUrl = System.Net.WebUtility.HtmlEncode(returnUrl ?? "/react/home");
+    var statusMessage = AuthStatusMessage(error, external);
     var html = AccountPage("Dang nhap", $$"""
 <div class="auth-brand"><div class="auth-logo">đ</div><div><h1 class="auth-title">Chi Tieu Money</h1><p class="auth-sub">Tai chinh va cong viec trong mot workspace.</p></div></div>
+{{statusMessage}}
 <div class="auth-social-row">
   <form method="post" action="/account/external-login"><input type="hidden" name="provider" value="Google" /><input type="hidden" name="returnUrl" value="{{encodedReturnUrl}}" /><button class="auth-btn auth-social" type="submit">G Google</button></form>
   <form method="post" action="/account/external-login"><input type="hidden" name="provider" value="Facebook" /><input type="hidden" name="returnUrl" value="{{encodedReturnUrl}}" /><button class="auth-btn auth-social" type="submit">f Facebook</button></form>
@@ -304,10 +330,12 @@ app.MapPost("/account/login", async (
     }
 });
 
-app.MapGet("/account/register", () =>
+app.MapGet("/account/register", (string? error) =>
 {
-    var html = AccountPage("Dang ky", """
+    var statusMessage = AuthStatusMessage(error, null);
+    var html = AccountPage("Dang ky", $$"""
 <div class="auth-brand"><div class="auth-logo">đ</div><div><h1 class="auth-title">Tao tai khoan</h1><p class="auth-sub">Bat dau quan ly nhom, quy va task.</p></div></div>
+{{statusMessage}}
 <div class="auth-social-row">
   <form method="post" action="/account/external-login"><input type="hidden" name="provider" value="Google" /><input type="hidden" name="returnUrl" value="/react/home" /><button class="auth-btn auth-social" type="submit">G Google</button></form>
   <form method="post" action="/account/external-login"><input type="hidden" name="provider" value="Facebook" /><input type="hidden" name="returnUrl" value="/react/home" /><button class="auth-btn auth-social" type="submit">f Facebook</button></form>
@@ -538,9 +566,9 @@ api.MapGet("/app", async (
             new ReportResponse(0, 0, 0, 0, new(), new())));
     }
 
-    var transactions = await txService.GetByGroupMonthAsync(group.Id, monthKey);
+    var transactions = await txService.GetVisibleByGroupMonthAsync(group.Id, monthKey, userId);
     var budgets = await budgetService.GetByGroupMonthAsync(group.Id, monthKey);
-    var spending = await txService.GetExpenseByCategoryAsync(group.Id, monthKey);
+    var spending = await txService.GetVisibleExpenseByCategoryAsync(group.Id, monthKey, userId);
     var debts = await debtService.GetGroupDebtsAsync(group.Id);
     var splits = await splitService.GetGroupSplitsAsync(group.Id);
     var fund = await GetOrCreateSharedFundAsync(db, group.Id);
@@ -553,8 +581,8 @@ api.MapGet("/app", async (
 
     var income = transactions.Where(t => t.Type == "income").Sum(t => t.Amount);
     var expense = transactions.Where(t => t.Type == "expense").Sum(t => t.Amount);
-    var byCategory = await txService.GetExpenseByCategoryAsync(group.Id, monthKey);
-    var byMember = await txService.GetExpenseByMemberAsync(group.Id, monthKey);
+    var byCategory = await txService.GetVisibleExpenseByCategoryAsync(group.Id, monthKey, userId);
+    var byMember = await txService.GetVisibleExpenseByMemberAsync(group.Id, monthKey, userId);
 
     return Results.Ok(new AppStateResponse(
         new GroupResponse(group.Id, group.Name, group.Description, group.InviteCode),

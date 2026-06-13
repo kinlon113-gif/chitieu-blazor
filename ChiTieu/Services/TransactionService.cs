@@ -16,6 +16,16 @@ public class TransactionService
         _notif = notif;
     }
 
+    private static IQueryable<Transaction> VisibleToUser(IQueryable<Transaction> query, string userId)
+        => query.Where(t => t.UserId == userId || t.IsShared);
+
+    public async Task<List<Transaction>> GetVisibleByGroupMonthAsync(int groupId, string month, string userId)
+        => await VisibleToUser(_db.Transactions, userId)
+            .Include(t => t.User)
+            .Where(t => t.GroupId == groupId && t.Month == month)
+            .OrderByDescending(t => t.Date)
+            .ToListAsync();
+
     // Lấy tất cả giao dịch trong nhóm theo tháng
     public async Task<List<Transaction>> GetByGroupMonthAsync(int groupId, string month)
         => await _db.Transactions
@@ -34,10 +44,28 @@ public class TransactionService
         );
     }
 
+    public async Task<(decimal Income, decimal Expense)> GetVisibleSummaryAsync(int groupId, string month, string userId)
+    {
+        var txs = await GetVisibleByGroupMonthAsync(groupId, month, userId);
+        return (
+            txs.Where(t => t.Type == "income").Sum(t => t.Amount),
+            txs.Where(t => t.Type == "expense").Sum(t => t.Amount)
+        );
+    }
+
     // Chi theo danh mục
     public async Task<Dictionary<string, decimal>> GetExpenseByCategoryAsync(int groupId, string month)
     {
         var txs = await _db.Transactions
+            .Where(t => t.GroupId == groupId && t.Month == month && t.Type == "expense")
+            .ToListAsync();
+        return txs.GroupBy(t => t.Category)
+                  .ToDictionary(g => g.Key, g => g.Sum(t => t.Amount));
+    }
+
+    public async Task<Dictionary<string, decimal>> GetVisibleExpenseByCategoryAsync(int groupId, string month, string userId)
+    {
+        var txs = await VisibleToUser(_db.Transactions, userId)
             .Where(t => t.GroupId == groupId && t.Month == month && t.Type == "expense")
             .ToListAsync();
         return txs.GroupBy(t => t.Category)
@@ -55,6 +83,16 @@ public class TransactionService
                   .ToDictionary(g => g.Key, g => g.Sum(t => t.Amount));
     }
 
+    public async Task<Dictionary<string, decimal>> GetVisibleExpenseByMemberAsync(int groupId, string month, string userId)
+    {
+        var txs = await VisibleToUser(_db.Transactions, userId)
+            .Include(t => t.User)
+            .Where(t => t.GroupId == groupId && t.Month == month && t.Type == "expense")
+            .ToListAsync();
+        return txs.GroupBy(t => string.IsNullOrWhiteSpace(t.User.DisplayName) ? t.User.Email ?? "Ẩn danh" : t.User.DisplayName)
+                  .ToDictionary(g => g.Key, g => g.Sum(t => t.Amount));
+    }
+
     // Thêm giao dịch mới
     public async Task<Transaction> AddAsync(Transaction tx)
     {
@@ -62,13 +100,16 @@ public class TransactionService
         _db.Transactions.Add(tx);
         await _db.SaveChangesAsync();
 
-        // Gửi thông báo cho thành viên khác
-        await _notif.NotifyGroupAsync(tx.GroupId, tx.UserId, "new_expense",
-            "Giao dịch mới",
-            $"Có khoản {(tx.Type == "income" ? "thu" : "chi")} {tx.Amount:N0}đ được thêm vào nhóm");
+        if (tx.IsShared)
+        {
+            // Gửi thông báo cho thành viên khác
+            await _notif.NotifyGroupAsync(tx.GroupId, tx.UserId, "new_expense",
+                "Giao dịch mới",
+                $"Có khoản {(tx.Type == "income" ? "thu" : "chi")} {tx.Amount:N0}đ được thêm vào nhóm");
 
-        // Kiểm tra vượt ngân sách
-        await CheckBudgetAlertAsync(tx);
+            // Kiểm tra vượt ngân sách
+            await CheckBudgetAlertAsync(tx);
+        }
 
         return tx;
     }
@@ -124,6 +165,7 @@ public class TransactionService
         var spent = await _db.Transactions
             .Where(t => t.GroupId == tx.GroupId &&
                         t.Type == "expense" &&
+                        t.IsShared &&
                         t.Category == tx.Category &&
                         t.Month == tx.Month)
             .SumAsync(t => t.Amount);
