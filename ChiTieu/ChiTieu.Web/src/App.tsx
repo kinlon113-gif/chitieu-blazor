@@ -210,8 +210,15 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
     ...init,
   });
+  if (response.status === 401) {
+    window.location.href = "/account/login?returnUrl=/react/home";
+    throw new Error("Bạn cần đăng nhập lại.");
+  }
   if (response.redirected) {
-    window.location.href = response.url;
+    const redirectedUrl = new URL(response.url);
+    window.location.href = redirectedUrl.pathname.startsWith("/api")
+      ? "/account/login?returnUrl=/react/home"
+      : response.url;
     throw new Error("Bạn cần đăng nhập lại.");
   }
   if (!response.ok) {
@@ -318,9 +325,9 @@ export default function App() {
             <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileMenuOpen((current) => !current)}>
               <Menu className="h-5 w-5" />
             </Button>
-            <div>
-              <div className="text-sm text-muted-foreground">{state.group?.name ?? "Tài chính nhóm"}</div>
-              <h1 className="text-xl font-black tracking-tight">{activeLabel}</h1>
+            <div className="min-w-0">
+              <div className="truncate text-sm text-muted-foreground">{state.group?.name ?? "Tài chính nhóm"}</div>
+              <h1 className="truncate text-xl font-black tracking-tight">{activeLabel}</h1>
             </div>
             {state.groups.length > 1 && appMode === "finance" && (
               <select className="input-like hidden w-44 md:block" value={activeGroupId ?? state.group?.id ?? ""} onChange={(event) => setActiveGroupId(Number(event.target.value))}>
@@ -356,12 +363,12 @@ export default function App() {
                   <button
                     key={item.id}
                     onClick={() => navigate(item.id)}
-                    className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold ${
+                    className={`flex min-w-0 items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold ${
                       activeView === item.id ? "bg-blue-50 text-blue-700" : "text-slate-600"
                     }`}
                   >
-                    <item.icon className="h-4 w-4" />
-                    {item.label}
+                    <item.icon className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{item.label}</span>
                   </button>
                 ))}
               </div>
@@ -404,12 +411,12 @@ export default function App() {
             <button
               key={item.id}
               onClick={() => navigate(item.id)}
-              className={`flex flex-col items-center gap-1 rounded-md px-1 py-2 text-[10px] font-semibold ${
+              className={`flex h-12 min-w-0 flex-col items-center gap-1 rounded-md px-1 py-2 text-[10px] font-semibold ${
                 activeView === item.id ? "bg-blue-50 text-blue-600" : "text-slate-500"
               }`}
             >
-              <item.icon className="h-4 w-4" />
-              {item.label}
+              <item.icon className="h-4 w-4 shrink-0" />
+              <span className="w-full truncate text-center leading-none">{item.label}</span>
             </button>
           ))}
         </div>
@@ -1033,13 +1040,13 @@ function TransactionRows({ transactions, onDeleted }: { transactions: Transactio
   return (
     <div className="divide-y">
       {transactions.map((tx) => (
-        <div key={tx.id} className="flex items-start gap-4 px-5 py-4 transition hover:bg-slate-50">
+        <div key={tx.id} className="flex items-start gap-3 px-4 py-4 transition hover:bg-slate-50 sm:gap-4 sm:px-5">
           <div className="grid h-11 w-11 shrink-0 place-items-center rounded-md bg-slate-100 text-slate-700">
             {tx.type === "income" ? <BadgeDollarSign className="h-5 w-5" /> : <CreditCard className="h-5 w-5" />}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <div className="font-bold">{tx.note || labelOf(tx.category)}</div>
+              <div className="min-w-0 truncate font-bold">{tx.note || labelOf(tx.category)}</div>
               {tx.isShared && <Badge variant="default">Chung</Badge>}
               {tx.fromEmail && <Badge variant="secondary">VCB</Badge>}
             </div>
@@ -1055,7 +1062,7 @@ function TransactionRows({ transactions, onDeleted }: { transactions: Transactio
               ) : null}
             </div>
           </div>
-          <div className={tx.type === "income" ? "font-black text-emerald-600" : "font-black text-red-600"}>
+          <div className={tx.type === "income" ? "shrink-0 text-sm font-black text-emerald-600 sm:text-base" : "shrink-0 text-sm font-black text-red-600 sm:text-base"}>
             {tx.type === "income" ? "+" : "-"}{money(tx.amount)}
           </div>
           <Button variant="ghost" size="icon" onClick={() => remove(tx.id)} title="Xóa giao dịch">

@@ -84,6 +84,28 @@ builder.Services.ConfigureApplicationCookie(options =>
     options.LogoutPath = "/account/logout";
     options.AccessDeniedPath = "/account/login";
     options.SlidingExpiration = true;
+    options.Events.OnRedirectToLogin = context =>
+    {
+        if (context.Request.Path.StartsWithSegments("/api"))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return Task.CompletedTask;
+        }
+
+        context.Response.Redirect(context.RedirectUri);
+        return Task.CompletedTask;
+    };
+    options.Events.OnRedirectToAccessDenied = context =>
+    {
+        if (context.Request.Path.StartsWithSegments("/api"))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return Task.CompletedTask;
+        }
+
+        context.Response.Redirect(context.RedirectUri);
+        return Task.CompletedTask;
+    };
 });
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -245,7 +267,10 @@ static string AccountPage(string title, string body)
 }
 
 static bool IsLocalReturnUrl(string? returnUrl)
-    => !string.IsNullOrWhiteSpace(returnUrl) && returnUrl.StartsWith('/') && !returnUrl.StartsWith("//");
+    => !string.IsNullOrWhiteSpace(returnUrl)
+        && returnUrl.StartsWith('/')
+        && !returnUrl.StartsWith("//")
+        && !returnUrl.StartsWith("/api", StringComparison.OrdinalIgnoreCase);
 
 static string AuthStatusMessage(string? error, string? external)
 {
@@ -267,7 +292,7 @@ static string AuthStatusMessage(string? error, string? external)
 
 app.MapGet("/account/login", (string? returnUrl, string? error, string? external) =>
 {
-    var encodedReturnUrl = System.Net.WebUtility.HtmlEncode(returnUrl ?? "/react/home");
+    var encodedReturnUrl = System.Net.WebUtility.HtmlEncode(IsLocalReturnUrl(returnUrl) ? returnUrl : "/react/home");
     var statusMessage = AuthStatusMessage(error, external);
     var html = AccountPage("Dang nhap", $$"""
 <div class="auth-brand"><div class="auth-logo">đ</div><div><h1 class="auth-title">Chi Tieu Money</h1><p class="auth-sub">Tai chinh va cong viec trong mot workspace.</p></div></div>
