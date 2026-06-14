@@ -199,7 +199,15 @@ static string AccountPage(string title, string body)
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+    <meta name="theme-color" content="#2563EB" />
+    <meta name="application-name" content="Chi Tieu" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Chi Tieu" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>{{title}} - Chi Tieu</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/app-icon-180.png" />
     <link rel="stylesheet" href="/css/app.css" />
     <style>
       body{margin:0;background:#f4f7fb;color:#111827;font-family:Inter,system-ui,sans-serif}

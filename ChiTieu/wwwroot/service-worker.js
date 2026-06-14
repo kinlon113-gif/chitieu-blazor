@@ -1,4 +1,4 @@
-const CACHE_NAME = "chitieu-shell-v1";
+const CACHE_NAME = "chitieu-shell-v2";
 const SHELL_ASSETS = [
   "/css/app.css",
   "/js/location.js",
@@ -32,6 +32,8 @@ self.addEventListener("fetch", event => {
 
   const url = new URL(request.url);
   if (url.pathname.startsWith("/api") || url.pathname.startsWith("/_blazor")) return;
+  if (request.mode === "navigate" || request.destination === "document") return;
+  if (url.pathname.startsWith("/account")) return;
 
   event.respondWith(
     fetch(request)
