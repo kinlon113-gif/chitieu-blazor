@@ -1,6 +1,14 @@
 window.chiTieuLocation = {
     getCurrentPosition: function () {
         return new Promise(function (resolve) {
+            if (!window.isSecureContext) {
+                resolve({
+                    ok: false,
+                    error: "Can mo app bang HTTPS de lay vi tri. Trinh duyet chan GPS tren HTTP, tru localhost."
+                });
+                return;
+            }
+
             if (!navigator.geolocation) {
                 resolve({
                     ok: false,
@@ -21,11 +29,11 @@ window.chiTieuLocation = {
                 function (error) {
                     var message = "Khong lay duoc vi tri.";
                     if (error.code === error.PERMISSION_DENIED) {
-                        message = "Ban chua cho phep trinh duyet truy cap vi tri.";
+                        message = "Ban dang chan quyen vi tri. Hay vao cai dat trinh duyet/app va cho phep Location.";
                     } else if (error.code === error.POSITION_UNAVAILABLE) {
-                        message = "Thiet bi chua co vi tri kha dung.";
+                        message = "Thiet bi chua co vi tri kha dung. Hay bat GPS/Wi-Fi/du lieu mang roi thu lai.";
                     } else if (error.code === error.TIMEOUT) {
-                        message = "Lay vi tri qua lau, thu lai khi tin hieu on hon.";
+                        message = "Lay vi tri qua lau. Hay ra noi thoang hon hoac bat GPS roi thu lai.";
                     }
 
                     resolve({

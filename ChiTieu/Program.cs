@@ -199,6 +199,8 @@ if (!app.Environment.IsDevelopment())
 app.UseForwardedHeaders();
 app.Use(async (context, next) =>
 {
+    context.Response.Headers["Permissions-Policy"] = "geolocation=(self)";
+
     if (context.Request.Path.Equals("/react/index.html", StringComparison.OrdinalIgnoreCase))
     {
         context.Response.Redirect("/react/home", permanent: false);
@@ -602,6 +604,7 @@ api.MapGet("/app", async (
             0,
             Array.Empty<TransactionResponse>(),
             Array.Empty<NotificationResponse>(),
+            Array.Empty<LocationShareResponse>(),
             userId));
     }
 
@@ -625,6 +628,21 @@ api.MapGet("/app", async (
         .Where(b => groupIds.Contains(b.GroupId) && b.Month == monthKey)
         .SumAsync(b => b.Amount);
     var notifications = await notificationService.GetUserNotifAsync(userId, 10);
+    var locationShares = await db.UserLocationShares
+        .Include(l => l.User)
+        .Where(l => l.GroupId == group.Id && l.IsSharing)
+        .OrderByDescending(l => l.UpdatedAt)
+        .Select(l => new LocationShareResponse(
+            l.UserId,
+            string.IsNullOrWhiteSpace(l.User.DisplayName) ? l.User.Email ?? "Thanh vien" : l.User.DisplayName,
+            l.User.Email ?? "",
+            l.Latitude,
+            l.Longitude,
+            l.Accuracy,
+            l.Label,
+            l.UpdatedAt,
+            l.UserId == userId))
+        .ToListAsync();
 
     var transactions = await txService.GetVisibleByGroupMonthAsync(group.Id, monthKey, userId);
     var budgets = await budgetService.GetByGroupMonthAsync(group.Id, monthKey);
@@ -704,6 +722,7 @@ api.MapGet("/app", async (
             n.Message,
             n.IsRead,
             n.CreatedAt)).ToList(),
+        locationShares,
         userId));
 });
 
@@ -767,6 +786,60 @@ api.MapPost("/notifications/read", async (HttpContext http, NotificationService 
     var userId = GetCurrentUserId(http);
     if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
     await notificationService.MarkAllReadAsync(userId);
+    return Results.NoContent();
+});
+
+api.MapPost("/location-shares", async (
+    HttpContext http,
+    GroupService groupService,
+    AppDbContext db,
+    LocationShareRequest request) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+    var groups = await groupService.GetUserGroupsAsync(userId);
+    var group = request.GroupId.HasValue ? groups.FirstOrDefault(g => g.Id == request.GroupId.Value) : groups.FirstOrDefault();
+    if (group == null) return Results.BadRequest(new { message = "Ban can chon nhom truoc khi chia se vi tri." });
+    if (request.Latitude is < -90 or > 90 || request.Longitude is < -180 or > 180)
+    {
+        return Results.BadRequest(new { message = "Toa do khong hop le." });
+    }
+
+    var share = await db.UserLocationShares.FirstOrDefaultAsync(l => l.GroupId == group.Id && l.UserId == userId);
+    if (share == null)
+    {
+        share = new UserLocationShare { GroupId = group.Id, UserId = userId };
+        db.UserLocationShares.Add(share);
+    }
+
+    share.IsSharing = true;
+    share.Latitude = request.Latitude;
+    share.Longitude = request.Longitude;
+    share.Accuracy = request.Accuracy;
+    share.Label = request.Label?.Trim() ?? "";
+    share.UpdatedAt = DateTime.UtcNow;
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+
+api.MapDelete("/location-shares/{groupId:int}", async (
+    HttpContext http,
+    GroupService groupService,
+    AppDbContext db,
+    int groupId) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+    var groupIds = (await groupService.GetUserGroupsAsync(userId)).Select(g => g.Id).ToHashSet();
+    if (!groupIds.Contains(groupId)) return Results.Forbid();
+
+    var share = await db.UserLocationShares.FirstOrDefaultAsync(l => l.GroupId == groupId && l.UserId == userId);
+    if (share != null)
+    {
+        share.IsSharing = false;
+        share.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+    }
     return Results.NoContent();
 });
 
@@ -1090,6 +1163,7 @@ static async Task RunSmokeTestAsync(IServiceProvider services)
             db.SplitBills.RemoveRange(db.SplitBills.Where(s => s.GroupId == group.Id));
             db.Debts.RemoveRange(db.Debts.Where(d => d.GroupId == group.Id));
             db.Notifications.RemoveRange(db.Notifications.Where(n => n.GroupId == group.Id));
+            db.UserLocationShares.RemoveRange(db.UserLocationShares.Where(l => l.GroupId == group.Id));
             db.Budgets.RemoveRange(db.Budgets.Where(b => b.GroupId == group.Id));
             db.Transactions.RemoveRange(db.Transactions.Where(t => t.GroupId == group.Id));
 
@@ -1129,6 +1203,7 @@ static async Task CleanupSmokeUsersAsync(IServiceProvider services)
             db.SplitBills.RemoveRange(db.SplitBills.Where(s => s.GroupId == groupId));
             db.Debts.RemoveRange(db.Debts.Where(d => d.GroupId == groupId));
             db.Notifications.RemoveRange(db.Notifications.Where(n => n.GroupId == groupId));
+            db.UserLocationShares.RemoveRange(db.UserLocationShares.Where(l => l.GroupId == groupId));
             db.Budgets.RemoveRange(db.Budgets.Where(b => b.GroupId == groupId));
             db.Transactions.RemoveRange(db.Transactions.Where(t => t.GroupId == groupId));
 
@@ -1198,6 +1273,7 @@ record AppStateResponse(
     decimal BudgetTotal,
     IReadOnlyList<TransactionResponse> OverviewTransactions,
     IReadOnlyList<NotificationResponse> Notifications,
+    IReadOnlyList<LocationShareResponse> LocationShares,
     string CurrentUserId);
 
 record GroupResponse(int Id, string Name, string Description, string InviteCode);
@@ -1226,6 +1302,7 @@ record FundTransactionResponse(int Id, string Type, decimal Amount, string Note,
 record SplitResponse(int Id, string Description, decimal TotalAmount, string SplitType, DateTime Date, bool IsSettled, int MemberCount, int PaidCount);
 record ReportResponse(decimal Income, decimal Expense, decimal Balance, int Count, Dictionary<string, decimal> ByCategory, Dictionary<string, decimal> ByMember);
 record NotificationResponse(int Id, int GroupId, string Type, string Title, string Message, bool IsRead, DateTime CreatedAt);
+record LocationShareResponse(string UserId, string UserName, string Email, double Latitude, double Longitude, double? Accuracy, string Label, DateTime UpdatedAt, bool IsMe);
 
 record TransactionRequest(
     int? GroupId,
@@ -1246,3 +1323,4 @@ record GroupJoinRequest(string? InviteCode);
 record BudgetRequest(int? GroupId, string CategoryId, string Month, decimal Amount);
 record FundTransactionRequest(int? GroupId, string Type, decimal Amount, string? Note);
 record SplitCreateRequest(int? GroupId, decimal TotalAmount, string? Description, List<string>? ParticipantIds);
+record LocationShareRequest(int? GroupId, double Latitude, double Longitude, double? Accuracy, string? Label);

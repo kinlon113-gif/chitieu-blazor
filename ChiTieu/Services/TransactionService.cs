@@ -105,7 +105,7 @@ public class TransactionService
             // Gửi thông báo cho thành viên khác
             await _notif.NotifyGroupAsync(tx.GroupId, tx.UserId, "new_expense",
                 "Giao dịch mới",
-                $"Có khoản {(tx.Type == "income" ? "thu" : "chi")} {tx.Amount:N0}đ được thêm vào nhóm");
+                $"Có khoản {(tx.Type == "income" ? "thu" : "chi")} {tx.Amount:N0} VND được thêm vào nhóm");
 
             // Kiểm tra vượt ngân sách
             await CheckBudgetAlertAsync(tx);
@@ -175,13 +175,13 @@ public class TransactionService
         {
             await _notif.NotifyGroupAsync(tx.GroupId, "", "over_budget",
                 "⚠️ Vượt ngân sách!",
-                $"Danh mục đã dùng {pct:P0} ngân sách tháng này ({spent:N0}đ / {budget.Amount:N0}đ)");
+                $"Danh mục đã dùng {pct:P0} ngân sách tháng này ({spent:N0} VND / {budget.Amount:N0} VND)");
         }
         else if (pct >= 0.8m)
         {
             await _notif.NotifyGroupAsync(tx.GroupId, "", "over_budget",
                 "⚠️ Gần vượt ngân sách",
-                $"Đã dùng {pct:P0} ngân sách ({spent:N0}đ / {budget.Amount:N0}đ)");
+                $"Đã dùng {pct:P0} ngân sách ({spent:N0} VND / {budget.Amount:N0} VND)");
         }
     }
 }

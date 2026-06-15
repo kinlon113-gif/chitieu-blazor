@@ -53,6 +53,7 @@ type AppState = {
   budgetTotal: number;
   overviewTransactions: Transaction[];
   notifications: NotificationItem[];
+  locationShares: LocationShare[];
   currentUserId: string;
 };
 
@@ -89,6 +90,17 @@ type SplitItem = {
   paidCount: number;
 };
 type NotificationItem = { id: number; groupId: number; type: string; title: string; message: string; isRead: boolean; createdAt: string };
+type LocationShare = {
+  userId: string;
+  userName: string;
+  email: string;
+  latitude: number;
+  longitude: number;
+  accuracy?: number | null;
+  label: string;
+  updatedAt: string;
+  isMe: boolean;
+};
 type TaskItem = {
   id: string;
   title: string;
@@ -125,6 +137,7 @@ const emptyState: AppState = {
   budgetTotal: 0,
   overviewTransactions: [],
   notifications: [],
+  locationShares: [],
   currentUserId: "",
 };
 
@@ -195,6 +208,29 @@ function formatAmountInput(input: string) {
   const digits = input.replace(/\D/g, "");
   if (!digits) return "";
   return Number(digits).toLocaleString("en-US");
+}
+
+function geolocationBlockMessage() {
+  if (!window.isSecureContext) {
+    return "Can mo app bang HTTPS de lay vi tri. Trinh duyet chan GPS tren HTTP, tru localhost.";
+  }
+  if (!navigator.geolocation) {
+    return "Trinh duyet hoac thiet bi nay khong ho tro lay vi tri.";
+  }
+  return "";
+}
+
+function geolocationErrorMessage(error: GeolocationPositionError) {
+  if (error.code === error.PERMISSION_DENIED) {
+    return "Ban dang chan quyen vi tri. Hay vao cai dat trinh duyet/app va cho phep Location.";
+  }
+  if (error.code === error.POSITION_UNAVAILABLE) {
+    return "Thiet bi chua co vi tri kha dung. Hay bat GPS/Wi-Fi/du lieu mang roi thu lai.";
+  }
+  if (error.code === error.TIMEOUT) {
+    return "Lay vi tri qua lau. Hay ra noi thoang hon hoac bat GPS roi thu lai.";
+  }
+  return error.message || "Khong lay duoc vi tri.";
 }
 
 function useLocalTasks() {
@@ -410,7 +446,7 @@ export default function App() {
               {activeView === "split" && <SplitView splits={state.splits} members={state.members} onSaved={load} groupId={state.group.id} />}
               {activeView === "groups" && <GroupsView state={state} month={month} activeGroupId={state.group.id} onSaved={load} onSelectGroup={setActiveGroupId} />}
               {(activeView === "tasks" || activeView === "task-board" || activeView === "task-calendar") && <TasksView tasks={tasks} setTasks={setTasks} view={activeView} />}
-              {activeView === "locator" && <LocatorView />}
+              {activeView === "locator" && <LocatorView state={state} onChanged={load} />}
               {activeView === "settings" && <SettingsView />}
             </>
           )}
@@ -454,18 +490,23 @@ function NotificationsButton({ notifications, onChanged }: { notifications: Noti
         {unread > 0 && <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white">{unread}</span>}
       </Button>
       {open && (
-        <div className="absolute right-0 top-12 z-50 w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-md border bg-white shadow-xl">
+        <div className="fixed left-3 right-3 top-[4.5rem] z-50 overflow-hidden rounded-md border bg-white shadow-xl sm:left-auto sm:right-4 sm:w-[24rem]">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <div className="font-black">Thong bao</div>
             <button className="text-xs font-bold text-blue-600" onClick={markRead}>Da doc</button>
           </div>
-          <div className="max-h-80 overflow-y-auto">
+          <div className="max-h-[70dvh] overflow-y-auto">
             {notifications.length === 0 ? <div className="p-4 text-sm text-muted-foreground">Chua co thong bao.</div> : null}
             {notifications.map((item) => (
               <div key={item.id} className={`border-b px-4 py-3 text-sm ${item.isRead ? "bg-white" : "bg-blue-50"}`}>
-                <div className="font-bold">{item.title}</div>
-                <div className="mt-1 text-muted-foreground">{item.message}</div>
-                <div className="mt-1 text-xs text-slate-400">{new Date(item.createdAt).toLocaleString("vi-VN")}</div>
+                <div className="flex items-start gap-2">
+                  <Bell className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
+                  <div className="min-w-0">
+                    <div className="break-words font-bold">{item.title}</div>
+                    <div className="mt-1 whitespace-pre-wrap break-words text-slate-700">{item.message}</div>
+                    <div className="mt-2 text-xs text-slate-400">{new Date(item.createdAt).toLocaleString("vi-VN")}</div>
+                  </div>
+                </div>
               </div>
             ))}
           </div>
@@ -1102,37 +1143,100 @@ function TasksView({ tasks, setTasks, view }: { tasks: TaskItem[]; setTasks: Dis
   );
 }
 
-function LocatorView() {
+function LocatorView({ state, onChanged }: { state: AppState; onChanged: () => void }) {
   const [location, setLocation] = useState<{ latitude: number; longitude: number; accuracy: number } | null>(null);
-  const [status, setStatus] = useState("Bam lay vi tri de tao link chia se.");
+  const [status, setStatus] = useState("Bam lay vi tri hoac bat chia se de nhom thay vi tri cua ban.");
   const [locating, setLocating] = useState(false);
+  const [sharing, setSharing] = useState(() => {
+    try {
+      return localStorage.getItem(`chitieu.locationSharing.${state.group?.id ?? "none"}`) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const myShare = state.locationShares.find((item) => item.isMe);
   const mapUrl = location
     ? `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`
     : "";
 
-  const locate = () => {
-    if (!navigator.geolocation) {
-      setStatus("Trinh duyet khong ho tro GPS.");
+  useEffect(() => {
+    if (myShare) setSharing(true);
+  }, [myShare]);
+
+  const saveLocation = async (next: { latitude: number; longitude: number; accuracy: number }) => {
+    if (!state.group) return;
+    await api<void>("/api/location-shares", {
+      method: "POST",
+      body: JSON.stringify({
+        groupId: state.group.id,
+        latitude: next.latitude,
+        longitude: next.longitude,
+        accuracy: next.accuracy,
+        label: "Vi tri hien tai",
+      }),
+    });
+    localStorage.setItem(`chitieu.locationSharing.${state.group.id}`, "1");
+    setSharing(true);
+    onChanged();
+  };
+
+  const locate = (shareAfter = false) => {
+    const blockMessage = geolocationBlockMessage();
+    if (blockMessage) {
+      setStatus(blockMessage);
       return;
     }
     setLocating(true);
     setStatus("Dang lay vi tri...");
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setLocation({
+        const next = {
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
           accuracy: position.coords.accuracy,
-        });
-        setStatus("Da lay vi tri hien tai.");
+        };
+        setLocation(next);
+        if (shareAfter) {
+          void saveLocation(next)
+            .then(() => setStatus("Da bat chia se vi tri voi nhom."))
+            .catch((error) => setStatus(error instanceof Error ? error.message : "Khong luu duoc vi tri."));
+        } else {
+          setStatus("Da lay vi tri hien tai.");
+        }
         setLocating(false);
       },
       (error) => {
-        setStatus(error.message || "Khong lay duoc vi tri.");
+        setStatus(geolocationErrorMessage(error));
         setLocating(false);
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 },
     );
+  };
+
+  useEffect(() => {
+    if (!sharing || !state.group) return;
+    locate(true);
+    const timer = window.setInterval(() => locate(true), 60000);
+    return () => window.clearInterval(timer);
+  }, [sharing, state.group?.id]);
+
+  useEffect(() => {
+    try {
+      setSharing(localStorage.getItem(`chitieu.locationSharing.${state.group?.id ?? "none"}`) === "1" || Boolean(myShare));
+    } catch {
+      setSharing(Boolean(myShare));
+    }
+  }, [state.group?.id, myShare]);
+
+  const startSharing = () => locate(true);
+
+  const stopSharing = async () => {
+    if (!state.group) return;
+    await api<void>(`/api/location-shares/${state.group.id}`, { method: "DELETE" });
+    localStorage.removeItem(`chitieu.locationSharing.${state.group.id}`);
+    setSharing(false);
+    setStatus("Da tat chia se vi tri.");
+    onChanged();
   };
 
   const copy = async () => {
@@ -1145,14 +1249,25 @@ function LocatorView() {
     <section className="grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
       <Card>
         <CardHeader>
-          <CardTitle>Dinh vi nhanh</CardTitle>
-          <CardDescription>Ban free: lay GPS hien tai, mo ban do va copy link chia se.</CardDescription>
+          <CardTitle>Chia se vi tri</CardTitle>
+          <CardDescription>Chi thanh vien cung nhom va da duoc ban cho phep moi xem duoc vi tri.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3">
-          <Button onClick={locate} disabled={locating}>
+          <Button onClick={() => locate(false)} disabled={locating}>
             <Navigation className="h-4 w-4" />
             {locating ? "Dang lay vi tri..." : "Lay vi tri"}
           </Button>
+          {sharing ? (
+            <Button variant="outline" onClick={stopSharing}>
+              <MapPin className="h-4 w-4" />
+              Tat chia se
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={startSharing} disabled={locating || !state.group}>
+              <MapPin className="h-4 w-4" />
+              Bat chia se voi nhom
+            </Button>
+          )}
           {mapUrl && (
             <div className="grid gap-2">
               <Button asChild variant="outline">
@@ -1169,18 +1284,37 @@ function LocatorView() {
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>Toa do</CardTitle>
-          <CardDescription>Du lieu chi nam tren may ban va link ban chia se.</CardDescription>
+          <CardTitle>Thanh vien dang chia se</CardTitle>
+          <CardDescription>Vi tri gan nhat khi ho mo app va bat chia se.</CardDescription>
         </CardHeader>
-        <CardContent>
-          {location ? (
-            <div className="grid gap-2 text-sm">
-              <div><strong>Lat:</strong> {location.latitude.toFixed(6)}</div>
-              <div><strong>Lng:</strong> {location.longitude.toFixed(6)}</div>
-              <div><strong>Sai so:</strong> ~{Math.round(location.accuracy)}m</div>
-            </div>
+        <CardContent className="grid gap-3">
+          {state.locationShares.length > 0 ? (
+            state.locationShares.map((item) => {
+              const url = `https://www.google.com/maps/search/?api=1&query=${item.latitude},${item.longitude}`;
+              const updated = new Date(item.updatedAt);
+              return (
+                <div key={item.userId} className="rounded-md border bg-white p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-black">{item.userName || item.email || "Thanh vien"} {item.isMe ? "(ban)" : ""}</div>
+                      <div className="mt-1 text-sm text-muted-foreground">{updated.toLocaleString("vi-VN")}</div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {item.latitude.toFixed(6)}, {item.longitude.toFixed(6)}
+                        {item.accuracy ? ` - sai so ~${Math.round(item.accuracy)}m` : ""}
+                      </div>
+                    </div>
+                    <Button asChild variant="outline" size="sm">
+                      <a href={url} target="_blank" rel="noreferrer">
+                        <MapPin className="h-4 w-4" />
+                        Map
+                      </a>
+                    </Button>
+                  </div>
+                </div>
+              );
+            })
           ) : (
-            <EmptyRows text="Chua co vi tri." />
+            <EmptyRows text="Chua co ai bat chia se vi tri trong nhom nay." />
           )}
         </CardContent>
       </Card>
@@ -1299,26 +1433,27 @@ function BudgetList({ budgets, onDelete }: { budgets: Budget[]; onDelete?: (id: 
 }
 
 function CheckInCard() {
-  const [status, setStatus] = useState("Sẵn sàng lấy vị trí");
+  const [status, setStatus] = useState("San sang lay vi tri");
   const locate = () => {
-    if (!navigator.geolocation) return setStatus("Trình duyệt không hỗ trợ GPS.");
-    setStatus("Đang lấy vị trí...");
+    const blockMessage = geolocationBlockMessage();
+    if (blockMessage) return setStatus(blockMessage);
+    setStatus("Dang lay vi tri...");
     navigator.geolocation.getCurrentPosition(
-      (position) => setStatus(`${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)} · sai số ~${Math.round(position.coords.accuracy)}m`),
-      (error) => setStatus(error.message),
+      (position) => setStatus(`${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)} - sai so ~${Math.round(position.coords.accuracy)}m`),
+      (error) => setStatus(geolocationErrorMessage(error)),
       { enableHighAccuracy: true, timeout: 12000 },
     );
   };
   return (
     <Card className="bg-slate-950 text-white">
       <CardHeader>
-        <CardTitle>Check-in chi tiêu</CardTitle>
-        <CardDescription className="text-slate-400">Kiểm tra quyền GPS trước khi lưu giao dịch.</CardDescription>
+        <CardTitle>Check-in chi tieu</CardTitle>
+        <CardDescription className="text-slate-400">Kiem tra quyen GPS truoc khi luu giao dich.</CardDescription>
       </CardHeader>
       <CardContent>
         <Button className="w-full bg-white text-slate-950 hover:bg-slate-100" onClick={locate}>
           <LocateFixed className="h-4 w-4" />
-          Thử lấy vị trí
+          Thu lay vi tri
         </Button>
         <div className="mt-3 text-sm text-slate-300">{status}</div>
       </CardContent>
@@ -1380,8 +1515,9 @@ function QuickAddDialog({ onSaved, disabled, members, groupId }: { onSaved: () =
 
   const captureLocation = () => {
     setError("");
-    if (!navigator.geolocation) {
-      setError("Trình duyệt không hỗ trợ lấy vị trí.");
+    const blockMessage = geolocationBlockMessage();
+    if (blockMessage) {
+      setError(blockMessage);
       return;
     }
     setLocating(true);
@@ -1395,7 +1531,7 @@ function QuickAddDialog({ onSaved, disabled, members, groupId }: { onSaved: () =
         setLocating(false);
       },
       (err) => {
-        setError(err.message || "Không lấy được vị trí.");
+        setError(geolocationErrorMessage(err));
         setLocating(false);
       },
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 },

@@ -70,6 +70,23 @@ public class Transaction
     public AppUser User  { get; set; } = null!;
 }
 
+public class UserLocationShare
+{
+    public int      Id        { get; set; }
+    public int      GroupId   { get; set; }
+    public string   UserId    { get; set; } = "";
+    public bool     IsSharing { get; set; } = true;
+    public double   Latitude  { get; set; }
+    public double   Longitude { get; set; }
+    public double?  Accuracy  { get; set; }
+    public string   Label     { get; set; } = "";
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public Group   Group { get; set; } = null!;
+    public AppUser User  { get; set; } = null!;
+}
+
 // ─── SPLIT BILL ───────────────────────────────────────────────
 public class SplitBill
 {

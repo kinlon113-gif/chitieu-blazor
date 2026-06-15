@@ -21,6 +21,7 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<FundTransaction> FundTransactions { get; set; }
     public DbSet<Notification>    Notifications    { get; set; }
     public DbSet<UserEmailConfig> UserEmailConfigs { get; set; }
+    public DbSet<UserLocationShare> UserLocationShares { get; set; }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -101,6 +102,14 @@ public class AppDbContext : IdentityDbContext<AppUser>
         {
             e.HasOne(n => n.User).WithMany().HasForeignKey(n => n.UserId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(n => n.Group).WithMany().HasForeignKey(n => n.GroupId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<UserLocationShare>(e =>
+        {
+            e.Property(l => l.Label).HasMaxLength(160);
+            e.HasIndex(l => new { l.GroupId, l.UserId }).IsUnique();
+            e.HasOne(l => l.Group).WithMany().HasForeignKey(l => l.GroupId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(l => l.User).WithMany().HasForeignKey(l => l.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<UserEmailConfig>(e =>

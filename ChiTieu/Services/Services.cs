@@ -330,7 +330,7 @@ public class SplitBillService
                 item.UserId,
                 "debt_reminder",
                 "Khoan can thanh toan",
-                $"{bill.Description}: ban can thanh toan {item.Amount:N0}d");
+                $"{bill.Description}: ban can thanh toan {item.Amount:N0} VND");
         }
     }
 }
