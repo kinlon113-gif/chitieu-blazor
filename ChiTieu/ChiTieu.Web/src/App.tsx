@@ -15,6 +15,7 @@ import {
   LocateFixed,
   MapPin,
   Menu,
+  Navigation,
   PieChart,
   Plus,
   ReceiptText,
@@ -34,7 +35,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input } from "@/components/ui/input";
 import { money } from "@/lib/utils";
 
-type ViewId = "overview" | "transactions" | "budget" | "fund" | "debts" | "reports" | "split" | "groups" | "settings" | "tasks" | "task-board" | "task-calendar";
+type ViewId = "overview" | "transactions" | "budget" | "fund" | "debts" | "reports" | "split" | "groups" | "settings" | "tasks" | "task-board" | "task-calendar" | "locator";
 type AppMode = "finance" | "work";
 
 type AppState = {
@@ -48,6 +49,11 @@ type AppState = {
   fundTransactions: FundTransaction[];
   splits: SplitItem[];
   report: Report;
+  overviewReport: Report;
+  budgetTotal: number;
+  overviewTransactions: Transaction[];
+  notifications: NotificationItem[];
+  currentUserId: string;
 };
 
 type Group = { id: number; name: string; description: string; inviteCode: string };
@@ -82,6 +88,7 @@ type SplitItem = {
   memberCount: number;
   paidCount: number;
 };
+type NotificationItem = { id: number; groupId: number; type: string; title: string; message: string; isRead: boolean; createdAt: string };
 type TaskItem = {
   id: string;
   title: string;
@@ -114,6 +121,11 @@ const emptyState: AppState = {
   fundTransactions: [],
   splits: [],
   report: { income: 0, expense: 0, balance: 0, count: 0, byCategory: {}, byMember: {} },
+  overviewReport: { income: 0, expense: 0, balance: 0, count: 0, byCategory: {}, byMember: {} },
+  budgetTotal: 0,
+  overviewTransactions: [],
+  notifications: [],
+  currentUserId: "",
 };
 
 const financeNavItems: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
@@ -132,6 +144,7 @@ const workNavItems: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
   { id: "tasks", label: "Today", icon: ClipboardList },
   { id: "task-board", label: "Board", icon: Target },
   { id: "task-calendar", label: "Calendar", icon: CalendarDays },
+  { id: "locator", label: "Dinh vi", icon: MapPin },
   { id: "settings", label: "Cài đặt", icon: Settings },
 ];
 
@@ -327,7 +340,7 @@ export default function App() {
             </Button>
             <div className="min-w-0">
               <div className="truncate text-sm text-muted-foreground">{state.group?.name ?? "Tài chính nhóm"}</div>
-              <h1 className="truncate text-xl font-black tracking-tight">{activeLabel}</h1>
+              <h1 className="whitespace-normal text-xl font-black leading-tight tracking-tight">{activeLabel}</h1>
             </div>
             {state.groups.length > 1 && appMode === "finance" && (
               <select className="input-like hidden w-44 md:block" value={activeGroupId ?? state.group?.id ?? ""} onChange={(event) => setActiveGroupId(Number(event.target.value))}>
@@ -348,9 +361,7 @@ export default function App() {
             <Button variant="outline" size="icon" onClick={load} disabled={loading}>
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             </Button>
-            <Button variant="outline" size="icon">
-              <Bell className="h-4 w-4" />
-            </Button>
+            <NotificationsButton notifications={state.notifications} onChanged={load} />
             <Button variant={appMode === "work" ? "default" : "outline"} size="icon" onClick={switchMode} title={appMode === "finance" ? "Mở quản lý công việc" : "Quay lại tài chính"}>
               {appMode === "finance" ? <BriefcaseBusiness className="h-4 w-4" /> : <WalletCards className="h-4 w-4" />}
             </Button>
@@ -399,6 +410,7 @@ export default function App() {
               {activeView === "split" && <SplitView splits={state.splits} members={state.members} onSaved={load} groupId={state.group.id} />}
               {activeView === "groups" && <GroupsView state={state} month={month} activeGroupId={state.group.id} onSaved={load} onSelectGroup={setActiveGroupId} />}
               {(activeView === "tasks" || activeView === "task-board" || activeView === "task-calendar") && <TasksView tasks={tasks} setTasks={setTasks} view={activeView} />}
+              {activeView === "locator" && <LocatorView />}
               {activeView === "settings" && <SettingsView />}
             </>
           )}
@@ -416,7 +428,7 @@ export default function App() {
               }`}
             >
               <item.icon className="h-4 w-4 shrink-0" />
-              <span className="w-full truncate text-center leading-none">{item.label}</span>
+              <span className="w-full text-center leading-tight">{item.label}</span>
             </button>
           ))}
         </div>
@@ -425,7 +437,76 @@ export default function App() {
   );
 }
 
+function NotificationsButton({ notifications, onChanged }: { notifications: NotificationItem[]; onChanged: () => void }) {
+  const [open, setOpen] = useState(false);
+  const unread = notifications.filter((item) => !item.isRead).length;
+
+  const markRead = async () => {
+    await api<void>("/api/notifications/read", { method: "POST" });
+    setOpen(false);
+    onChanged();
+  };
+
+  return (
+    <div className="relative">
+      <Button variant="outline" size="icon" onClick={() => setOpen((current) => !current)} title="Thong bao">
+        <Bell className="h-4 w-4" />
+        {unread > 0 && <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white">{unread}</span>}
+      </Button>
+      {open && (
+        <div className="absolute right-0 top-12 z-50 w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-md border bg-white shadow-xl">
+          <div className="flex items-center justify-between border-b px-4 py-3">
+            <div className="font-black">Thong bao</div>
+            <button className="text-xs font-bold text-blue-600" onClick={markRead}>Da doc</button>
+          </div>
+          <div className="max-h-80 overflow-y-auto">
+            {notifications.length === 0 ? <div className="p-4 text-sm text-muted-foreground">Chua co thong bao.</div> : null}
+            {notifications.map((item) => (
+              <div key={item.id} className={`border-b px-4 py-3 text-sm ${item.isRead ? "bg-white" : "bg-blue-50"}`}>
+                <div className="font-bold">{item.title}</div>
+                <div className="mt-1 text-muted-foreground">{item.message}</div>
+                <div className="mt-1 text-xs text-slate-400">{new Date(item.createdAt).toLocaleString("vi-VN")}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OverviewView({ state, onRefresh }: { state: AppState; onRefresh: () => void }) {
+  const overview = state.overviewReport ?? state.report;
+  const homeTransactions = (state.overviewTransactions?.length ? state.overviewTransactions : state.transactions).slice(0, 6);
+  const homeMetrics = [
+    { label: "Tong ngan sach", value: state.budgetTotal, icon: Target, tone: "text-blue-600", bg: "bg-blue-50" },
+    { label: "Thu tat ca nhom", value: overview.income, icon: ArrowUpRight, tone: "text-emerald-600", bg: "bg-emerald-50" },
+    { label: "Chi tat ca nhom", value: overview.expense, icon: ArrowDownRight, tone: "text-red-600", bg: "bg-red-50" },
+  ];
+
+  return (
+    <>
+      <section className="grid gap-4 md:grid-cols-3">
+        {homeMetrics.map((metric) => (
+          <div key={metric.label} className={`metric-card ${metric.tone}`}>
+            <div className={`mb-4 grid h-10 w-10 place-items-center rounded-md ${metric.bg}`}>
+              <metric.icon className="h-5 w-5" />
+            </div>
+            <div className="text-sm font-medium text-slate-500">{metric.label}</div>
+            <div className="mt-1 text-2xl font-black text-slate-950">{money(metric.value)}</div>
+          </div>
+        ))}
+      </section>
+      <section className="grid gap-5 xl:grid-cols-[1.35fr_0.75fr]">
+        <RecentTransactionsCard transactions={homeTransactions} onDeleted={onRefresh} />
+        <div className="grid gap-5">
+          <BudgetList budgets={state.budgets} />
+          <CheckInCard />
+        </div>
+      </section>
+    </>
+  );
+
   const metrics = [
     { label: "Thu tháng này", value: state.report.income, icon: ArrowUpRight, tone: "text-emerald-600", bg: "bg-emerald-50" },
     { label: "Chi tháng này", value: state.report.expense, icon: ArrowDownRight, tone: "text-red-600", bg: "bg-red-50" },
@@ -756,6 +837,8 @@ function GroupsView({
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
   const selectedMember = state.members.find((member) => member.id === selectedMemberId) ?? state.members[0];
+  const currentMember = state.members.find((member) => member.id === state.currentUserId);
+  const canRemoveMembers = currentMember?.role === "owner";
   const memberTransactions = selectedMember ? state.transactions.filter((tx) => tx.userId === selectedMember.id) : [];
   const memberIncome = memberTransactions.filter((tx) => tx.type === "income").reduce((sum, tx) => sum + tx.amount, 0);
   const memberExpense = memberTransactions.filter((tx) => tx.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
@@ -776,6 +859,12 @@ function GroupsView({
     } finally {
       setSaving(false);
     }
+  };
+
+  const removeMember = async (memberId: string) => {
+    await api<void>(`/api/groups/${activeGroupId}/members/${encodeURIComponent(memberId)}`, { method: "DELETE" });
+    if (selectedMemberId === memberId) setSelectedMemberId("");
+    onSaved();
   };
 
   return (
@@ -830,7 +919,23 @@ function GroupsView({
                       <span className="text-xs text-muted-foreground">{member.role === "owner" ? "Chủ nhóm" : "Thành viên"}</span>
                     </span>
                   </span>
-                  <strong>{money(member.spent)}</strong>
+                  <span className="flex items-center gap-2">
+                    <strong>{money(member.spent)}</strong>
+                    {canRemoveMembers && member.role !== "owner" && member.id !== state.currentUserId && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        className="rounded p-1 text-red-600 hover:bg-red-50"
+                        title="Xoa thanh vien"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void removeMember(member.id);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </span>
+                    )}
+                  </span>
                 </button>
               ))}
             </div>
@@ -991,6 +1096,92 @@ function TasksView({ tasks, setTasks, view }: { tasks: TaskItem[]; setTasks: Dis
               </div>
             );
           })}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+function LocatorView() {
+  const [location, setLocation] = useState<{ latitude: number; longitude: number; accuracy: number } | null>(null);
+  const [status, setStatus] = useState("Bam lay vi tri de tao link chia se.");
+  const [locating, setLocating] = useState(false);
+  const mapUrl = location
+    ? `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`
+    : "";
+
+  const locate = () => {
+    if (!navigator.geolocation) {
+      setStatus("Trinh duyet khong ho tro GPS.");
+      return;
+    }
+    setLocating(true);
+    setStatus("Dang lay vi tri...");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocation({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        });
+        setStatus("Da lay vi tri hien tai.");
+        setLocating(false);
+      },
+      (error) => {
+        setStatus(error.message || "Khong lay duoc vi tri.");
+        setLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 },
+    );
+  };
+
+  const copy = async () => {
+    if (!mapUrl) return;
+    await navigator.clipboard?.writeText(mapUrl);
+    setStatus("Da copy link Google Maps.");
+  };
+
+  return (
+    <section className="grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
+      <Card>
+        <CardHeader>
+          <CardTitle>Dinh vi nhanh</CardTitle>
+          <CardDescription>Ban free: lay GPS hien tai, mo ban do va copy link chia se.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <Button onClick={locate} disabled={locating}>
+            <Navigation className="h-4 w-4" />
+            {locating ? "Dang lay vi tri..." : "Lay vi tri"}
+          </Button>
+          {mapUrl && (
+            <div className="grid gap-2">
+              <Button asChild variant="outline">
+                <a href={mapUrl} target="_blank" rel="noreferrer">
+                  <MapPin className="h-4 w-4" />
+                  Mo Google Maps
+                </a>
+              </Button>
+              <Button variant="outline" onClick={copy}>Copy link</Button>
+            </div>
+          )}
+          <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-600">{status}</div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Toa do</CardTitle>
+          <CardDescription>Du lieu chi nam tren may ban va link ban chia se.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {location ? (
+            <div className="grid gap-2 text-sm">
+              <div><strong>Lat:</strong> {location.latitude.toFixed(6)}</div>
+              <div><strong>Lng:</strong> {location.longitude.toFixed(6)}</div>
+              <div><strong>Sai so:</strong> ~{Math.round(location.accuracy)}m</div>
+            </div>
+          ) : (
+            <EmptyRows text="Chua co vi tri." />
+          )}
         </CardContent>
       </Card>
     </section>
@@ -1158,6 +1349,10 @@ function QuickAddDialog({ onSaved, disabled, members, groupId }: { onSaved: () =
     setSplitParticipantIds(members.map((member) => member.id));
   }, [members]);
 
+  useEffect(() => {
+    if (open && !location && !locating) captureLocation();
+  }, [open]);
+
   const switchType = (next: "expense" | "income") => {
     setType(next);
     setCategory(next === "expense" ? "food" : "salary");
@@ -1255,7 +1450,7 @@ function QuickAddDialog({ onSaved, disabled, members, groupId }: { onSaved: () =
           <span className="hidden sm:inline">Thêm giao dịch</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="top-[48%] max-h-[82dvh] gap-3 overflow-y-auto p-4 sm:max-h-[88vh] sm:p-5">
+      <DialogContent className="gap-3 p-4 sm:max-h-[88vh] sm:p-5">
         <DialogHeader>
           <DialogTitle>Thêm giao dịch</DialogTitle>
           <DialogDescription>Lưu khoản thu chi, phân loại và vị trí check-in.</DialogDescription>

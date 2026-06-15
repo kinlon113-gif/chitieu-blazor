@@ -574,6 +574,7 @@ api.MapGet("/app", async (
     BudgetService budgetService,
     DebtService debtService,
     SplitBillService splitService,
+    NotificationService notificationService,
     AppDbContext db,
     string? month,
     int? groupId) =>
@@ -596,8 +597,34 @@ api.MapGet("/app", async (
             null,
             Array.Empty<FundTransactionResponse>(),
             Array.Empty<SplitResponse>(),
-            new ReportResponse(0, 0, 0, 0, new(), new())));
+            new ReportResponse(0, 0, 0, 0, new(), new()),
+            new ReportResponse(0, 0, 0, 0, new(), new()),
+            0,
+            Array.Empty<TransactionResponse>(),
+            Array.Empty<NotificationResponse>(),
+            userId));
     }
+
+    var groupIds = groups.Select(g => g.Id).ToList();
+    var allTransactions = await db.Transactions
+        .Include(t => t.User)
+        .Where(t => groupIds.Contains(t.GroupId) && t.Month == monthKey && (t.UserId == userId || t.IsShared))
+        .OrderByDescending(t => t.Date)
+        .ToListAsync();
+    var allIncome = allTransactions.Where(t => t.Type == "income").Sum(t => t.Amount);
+    var allExpense = allTransactions.Where(t => t.Type == "expense").Sum(t => t.Amount);
+    var allByCategory = allTransactions
+        .Where(t => t.Type == "expense")
+        .GroupBy(t => t.Category)
+        .ToDictionary(g => g.Key, g => g.Sum(t => t.Amount));
+    var allByMember = allTransactions
+        .Where(t => t.Type == "expense")
+        .GroupBy(t => string.IsNullOrWhiteSpace(t.User.DisplayName) ? t.User.Email ?? "An danh" : t.User.DisplayName)
+        .ToDictionary(g => g.Key, g => g.Sum(t => t.Amount));
+    var budgetTotal = await db.Budgets
+        .Where(b => groupIds.Contains(b.GroupId) && b.Month == monthKey)
+        .SumAsync(b => b.Amount);
+    var notifications = await notificationService.GetUserNotifAsync(userId, 10);
 
     var transactions = await txService.GetVisibleByGroupMonthAsync(group.Id, monthKey, userId);
     var budgets = await budgetService.GetByGroupMonthAsync(group.Id, monthKey);
@@ -659,7 +686,25 @@ api.MapGet("/app", async (
             income - expense,
             transactions.Count,
             byCategory,
-            byMember)));
+            byMember),
+        new ReportResponse(
+            allIncome,
+            allExpense,
+            allIncome - allExpense,
+            allTransactions.Count,
+            allByCategory,
+            allByMember),
+        budgetTotal,
+        allTransactions.Take(8).Select(ToTransactionResponse).ToList(),
+        notifications.Select(n => new NotificationResponse(
+            n.Id,
+            n.GroupId,
+            n.Type,
+            n.Title,
+            n.Message,
+            n.IsRead,
+            n.CreatedAt)).ToList(),
+        userId));
 });
 
 api.MapPost("/groups", async (
@@ -688,6 +733,41 @@ api.MapPost("/groups/join", async (
 
     var group = await groupService.JoinByCodeAsync(code, userId);
     return Results.Ok(group == null ? null : new GroupResponse(group.Id, group.Name, group.Description, group.InviteCode));
+});
+
+api.MapDelete("/groups/{groupId:int}/members/{memberId}", async (
+    HttpContext http,
+    GroupService groupService,
+    int groupId,
+    string memberId) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+    await groupService.RemoveMemberAsync(groupId, userId, memberId);
+    return Results.NoContent();
+});
+
+api.MapGet("/notifications", async (HttpContext http, NotificationService notificationService) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+    var notifications = await notificationService.GetUserNotifAsync(userId, 20);
+    return Results.Ok(notifications.Select(n => new NotificationResponse(
+        n.Id,
+        n.GroupId,
+        n.Type,
+        n.Title,
+        n.Message,
+        n.IsRead,
+        n.CreatedAt)));
+});
+
+api.MapPost("/notifications/read", async (HttpContext http, NotificationService notificationService) =>
+{
+    var userId = GetCurrentUserId(http);
+    if (string.IsNullOrWhiteSpace(userId)) return Results.Unauthorized();
+    await notificationService.MarkAllReadAsync(userId);
+    return Results.NoContent();
 });
 
 api.MapPost("/transactions", async (
@@ -1113,7 +1193,12 @@ record AppStateResponse(
     FundResponse? Fund,
     IReadOnlyList<FundTransactionResponse> FundTransactions,
     IReadOnlyList<SplitResponse> Splits,
-    ReportResponse Report);
+    ReportResponse Report,
+    ReportResponse OverviewReport,
+    decimal BudgetTotal,
+    IReadOnlyList<TransactionResponse> OverviewTransactions,
+    IReadOnlyList<NotificationResponse> Notifications,
+    string CurrentUserId);
 
 record GroupResponse(int Id, string Name, string Description, string InviteCode);
 record MemberResponse(string Id, string Name, string Email, string Role, decimal Spent);
@@ -1140,6 +1225,7 @@ record FundResponse(int Id, string Name, decimal Balance);
 record FundTransactionResponse(int Id, string Type, decimal Amount, string Note, DateTime Date, string UserId);
 record SplitResponse(int Id, string Description, decimal TotalAmount, string SplitType, DateTime Date, bool IsSettled, int MemberCount, int PaidCount);
 record ReportResponse(decimal Income, decimal Expense, decimal Balance, int Count, Dictionary<string, decimal> ByCategory, Dictionary<string, decimal> ByMember);
+record NotificationResponse(int Id, int GroupId, string Type, string Title, string Message, bool IsRead, DateTime CreatedAt);
 
 record TransactionRequest(
     int? GroupId,

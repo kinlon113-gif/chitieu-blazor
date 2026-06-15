@@ -61,6 +61,20 @@ public class GroupService
         if (member != null) { _db.GroupMembers.Remove(member); await _db.SaveChangesAsync(); }
     }
 
+    public async Task RemoveMemberAsync(int groupId, string ownerId, string memberId)
+    {
+        var group = await _db.Groups.FindAsync(groupId);
+        if (group == null || group.OwnerId != ownerId) throw new Exception("Khong co quyen xoa thanh vien");
+        if (memberId == ownerId) throw new Exception("Chu nhom khong the tu xoa minh");
+
+        var member = await _db.GroupMembers.FirstOrDefaultAsync(m => m.GroupId == groupId && m.UserId == memberId);
+        if (member != null)
+        {
+            _db.GroupMembers.Remove(member);
+            await _db.SaveChangesAsync();
+        }
+    }
+
     public async Task DeleteAsync(int groupId, string ownerId)
     {
         var group = await _db.Groups.FindAsync(groupId);
@@ -154,6 +168,19 @@ public class NotificationService
         await _db.SaveChangesAsync();
     }
 
+    public async Task NotifyUserAsync(int groupId, string userId, string type, string title, string message)
+    {
+        _db.Notifications.Add(new Notification
+        {
+            UserId = userId,
+            GroupId = groupId,
+            Type = type,
+            Title = title,
+            Message = message,
+        });
+        await _db.SaveChangesAsync();
+    }
+
     // Gửi thông báo tới tất cả thành viên (trừ người tạo)
     public async Task NotifyGroupAsync(int groupId, string exceptUserId, string type, string title, string message)
     {
@@ -179,11 +206,13 @@ public class SplitBillService
 {
     private readonly AppDbContext _db;
     private readonly DebtService  _debt;
+    private readonly NotificationService _notif;
 
-    public SplitBillService(AppDbContext db, DebtService debt)
+    public SplitBillService(AppDbContext db, DebtService debt, NotificationService notif)
     {
         _db   = db;
         _debt = debt;
+        _notif = notif;
     }
 
     public async Task<List<SplitBill>> GetGroupSplitsAsync(int groupId)
@@ -222,6 +251,7 @@ public class SplitBillService
         }
         await _db.SaveChangesAsync();
         await _debt.RecalculateFromSplitAsync(bill.Id);
+        await NotifySplitDebtorsAsync(bill.Id);
         return bill;
     }
 
@@ -251,6 +281,7 @@ public class SplitBillService
         }
         await _db.SaveChangesAsync();
         await _debt.RecalculateFromSplitAsync(bill.Id);
+        await NotifySplitDebtorsAsync(bill.Id);
         return bill;
     }
 
@@ -281,7 +312,26 @@ public class SplitBillService
         }
         await _db.SaveChangesAsync();
         await _debt.RecalculateFromSplitAsync(bill.Id);
+        await NotifySplitDebtorsAsync(bill.Id);
         return bill;
+    }
+
+    private async Task NotifySplitDebtorsAsync(int splitBillId)
+    {
+        var bill = await _db.SplitBills
+            .Include(s => s.Items)
+            .FirstOrDefaultAsync(s => s.Id == splitBillId);
+        if (bill == null) return;
+
+        foreach (var item in bill.Items.Where(i => i.UserId != bill.PaidBy && !i.IsPaid))
+        {
+            await _notif.NotifyUserAsync(
+                bill.GroupId,
+                item.UserId,
+                "debt_reminder",
+                "Khoan can thanh toan",
+                $"{bill.Description}: ban can thanh toan {item.Amount:N0}d");
+        }
     }
 }
 
