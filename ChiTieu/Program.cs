@@ -567,6 +567,7 @@ app.MapGet("/dashboard", () => Results.Redirect("/react/home"));
 app.MapGet("/healthz", () => Results.Ok("OK"));
 app.MapGet("/react", () => Results.Redirect("/react/home"));
 app.MapGet("/react/home", (IWebHostEnvironment env) => Results.File(Path.Combine(env.WebRootPath, "react", "index.html"), "text/html"));
+app.MapGet("/react/assets/{*path}", () => Results.NotFound());
 
 var api = app.MapGroup("/api").RequireAuthorization();
 

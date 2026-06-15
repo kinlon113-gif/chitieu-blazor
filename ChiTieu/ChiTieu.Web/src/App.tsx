@@ -271,6 +271,10 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error("Bạn cần đăng nhập lại.");
   }
   if (!response.ok) {
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("text/html")) {
+      throw new Error(`May chu tra ve trang HTML thay vi du lieu API (${response.status}). Hay tai lai app hoac xoa cache PWA.`);
+    }
     const text = await response.text();
     throw new Error(text || `HTTP ${response.status}`);
   }

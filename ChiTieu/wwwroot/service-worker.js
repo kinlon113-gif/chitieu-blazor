@@ -1,4 +1,4 @@
-const CACHE_NAME = "chitieu-shell-v2";
+const CACHE_NAME = "chitieu-shell-v3";
 const SHELL_ASSETS = [
   "/css/app.css",
   "/js/location.js",
