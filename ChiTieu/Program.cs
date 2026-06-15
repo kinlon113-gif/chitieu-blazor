@@ -562,6 +562,7 @@ app.MapGet("/account/external-callback", async (
 });
 
 app.MapGet("/", () => Results.Redirect("/react/home"));
+app.MapGet("/home", () => Results.Redirect("/react/home"));
 app.MapGet("/dashboard", () => Results.Redirect("/react/home"));
 app.MapGet("/healthz", () => Results.Ok("OK"));
 app.MapGet("/react", () => Results.Redirect("/react/home"));

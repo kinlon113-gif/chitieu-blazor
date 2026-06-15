@@ -14,16 +14,7 @@
             <FocusOnNavigate RouteData="@routeData" Selector="h1" />
         </Found>
         <NotFound>
-            <PageTitle>Không tìm thấy trang</PageTitle>
-            <LayoutView Layout="@typeof(MainLayout)">
-                <MudContainer MaxWidth="MaxWidth.Medium" Class="py-12">
-                    <MudPaper Class="pa-8 text-center" Elevation="0" Outlined="true">
-                        <MudText Typo="Typo.h3">404</MudText>
-                        <MudText Typo="Typo.body1" Color="Color.Secondary" Class="mt-2">Trang không tồn tại</MudText>
-                        <MudButton Href="/" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4">Về trang chủ</MudButton>
-                    </MudPaper>
-                </MudContainer>
-            </LayoutView>
+            <RedirectToReactHome />
         </NotFound>
     </Router>
 </CascadingAuthenticationState>
