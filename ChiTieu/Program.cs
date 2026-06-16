@@ -255,6 +255,7 @@ static string AccountPage(string title, string body)
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>{{title}} - Chi Tieu</title>
     <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/app-icon-192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/app-icon-180.png" />
     <link rel="stylesheet" href="/css/app.css" />
     <style>
@@ -610,6 +611,8 @@ app.MapGet("/", () => Results.Redirect("/react/home"));
 app.MapGet("/home", () => Results.Redirect("/react/home"));
 app.MapGet("/dashboard", () => Results.Redirect("/react/home"));
 app.MapGet("/healthz", () => Results.Ok("OK"));
+app.MapGet("/favicon.ico", (IWebHostEnvironment env) =>
+    Results.File(Path.Combine(env.WebRootPath, "icons", "app-icon-192.png"), "image/png"));
 app.MapGet("/react", () => Results.Redirect("/react/home"));
 app.MapGet("/react/home", (HttpContext http, IWebHostEnvironment env) =>
 {
