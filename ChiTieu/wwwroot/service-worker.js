@@ -1,10 +1,9 @@
-const CACHE_NAME = "chitieu-shell-v3";
+const CACHE_NAME = "chitieu-shell-v4";
 const SHELL_ASSETS = [
   "/css/app.css",
   "/js/location.js",
   "/js/pwa.js",
   "/manifest.webmanifest",
-  "/icons/app-icon.svg",
   "/icons/app-icon-180.png",
   "/icons/app-icon-192.png",
   "/icons/app-icon-512.png"
@@ -31,6 +30,8 @@ self.addEventListener("fetch", event => {
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+  if (url.protocol !== "http:" && url.protocol !== "https:") return;
   if (url.pathname.startsWith("/api") || url.pathname.startsWith("/_blazor")) return;
   if (request.mode === "navigate" || request.destination === "document") return;
   if (url.pathname.startsWith("/account")) return;
@@ -38,8 +39,9 @@ self.addEventListener("fetch", event => {
   event.respondWith(
     fetch(request)
       .then(response => {
+        if (!response || !response.ok) return response;
         const copy = response.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
+        caches.open(CACHE_NAME).then(cache => cache.put(request, copy)).catch(() => {});
         return response;
       })
       .catch(() => caches.match(request))
