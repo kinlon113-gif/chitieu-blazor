@@ -260,14 +260,16 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (response.status === 401) {
-    window.location.href = "/account/login?returnUrl=/react/home";
+    redirectToLogin();
     throw new Error("Bạn cần đăng nhập lại.");
   }
   if (response.redirected) {
     const redirectedUrl = new URL(response.url);
-    window.location.href = redirectedUrl.pathname.startsWith("/api")
-      ? "/account/login?returnUrl=/react/home"
-      : response.url;
+    if (redirectedUrl.pathname.startsWith("/api") || redirectedUrl.pathname.startsWith("/account/login")) {
+      redirectToLogin();
+    } else {
+      window.location.replace(response.url);
+    }
     throw new Error("Bạn cần đăng nhập lại.");
   }
   if (!response.ok) {
@@ -280,6 +282,15 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   }
   if (response.status === 204) return undefined as T;
   return response.json();
+}
+
+let redirectingToLogin = false;
+
+function redirectToLogin() {
+  if (redirectingToLogin) return;
+  redirectingToLogin = true;
+  const returnUrl = `${window.location.pathname}${window.location.search}`;
+  window.location.replace(`/account/login?returnUrl=${encodeURIComponent(returnUrl || "/react/home")}`);
 }
 
 export default function App() {

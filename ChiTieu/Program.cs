@@ -80,6 +80,10 @@ if (!string.IsNullOrWhiteSpace(facebookAppId) && !string.IsNullOrWhiteSpace(face
 
 builder.Services.ConfigureApplicationCookie(options =>
 {
+    options.Cookie.Name = "ChiTieu.Auth";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Lax;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
     options.LoginPath = "/account/login";
     options.LogoutPath = "/account/logout";
     options.AccessDeniedPath = "/account/login";
@@ -292,9 +296,23 @@ static string AuthStatusMessage(string? error, string? external)
         : $"""<div class="auth-error">{System.Net.WebUtility.HtmlEncode(message)}</div>""";
 }
 
-app.MapGet("/account/login", (string? returnUrl, string? error, string? external) =>
+static void NoStore(HttpContext http)
 {
-    var encodedReturnUrl = System.Net.WebUtility.HtmlEncode(IsLocalReturnUrl(returnUrl) ? returnUrl : "/react/home");
+    http.Response.Headers.CacheControl = "no-store, no-cache, max-age=0";
+    http.Response.Headers.Pragma = "no-cache";
+    http.Response.Headers.Expires = "0";
+}
+
+app.MapGet("/account/login", (HttpContext http, string? returnUrl, string? error, string? external) =>
+{
+    var safeReturnUrl = IsLocalReturnUrl(returnUrl) ? returnUrl! : "/react/home";
+    if (http.User.Identity?.IsAuthenticated == true)
+    {
+        return Results.Redirect(safeReturnUrl);
+    }
+
+    NoStore(http);
+    var encodedReturnUrl = System.Net.WebUtility.HtmlEncode(safeReturnUrl);
     var statusMessage = AuthStatusMessage(error, external);
     var html = AccountPage("Dang nhap", $$"""
 <div class="auth-brand"><div class="auth-logo">đ</div><div><h1 class="auth-title">Chi Tieu Money</h1><p class="auth-sub">Tai chinh va cong viec trong mot workspace.</p></div></div>
@@ -566,7 +584,11 @@ app.MapGet("/home", () => Results.Redirect("/react/home"));
 app.MapGet("/dashboard", () => Results.Redirect("/react/home"));
 app.MapGet("/healthz", () => Results.Ok("OK"));
 app.MapGet("/react", () => Results.Redirect("/react/home"));
-app.MapGet("/react/home", (IWebHostEnvironment env) => Results.File(Path.Combine(env.WebRootPath, "react", "index.html"), "text/html"));
+app.MapGet("/react/home", (HttpContext http, IWebHostEnvironment env) =>
+{
+    NoStore(http);
+    return Results.File(Path.Combine(env.WebRootPath, "react", "index.html"), "text/html");
+}).RequireAuthorization();
 app.MapGet("/react/assets/{*path}", () => Results.NotFound());
 
 var api = app.MapGroup("/api").RequireAuthorization();
