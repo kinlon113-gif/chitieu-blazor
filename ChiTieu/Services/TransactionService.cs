@@ -19,6 +19,11 @@ public class TransactionService
     private static IQueryable<Transaction> VisibleToUser(IQueryable<Transaction> query, string userId)
         => query.Where(t => t.UserId == userId || t.IsShared);
 
+    private static string DisplayNameOf(AppUser? user)
+        => string.IsNullOrWhiteSpace(user?.DisplayName)
+            ? user?.Email ?? "An danh"
+            : user.DisplayName;
+
     public async Task<List<Transaction>> GetVisibleByGroupMonthAsync(int groupId, string month, string userId)
         => await VisibleToUser(_db.Transactions, userId)
             .Include(t => t.User)
@@ -79,7 +84,7 @@ public class TransactionService
             .Include(t => t.User)
             .Where(t => t.GroupId == groupId && t.Month == month && t.Type == "expense")
             .ToListAsync();
-        return txs.GroupBy(t => t.User.DisplayName)
+        return txs.GroupBy(t => DisplayNameOf(t.User))
                   .ToDictionary(g => g.Key, g => g.Sum(t => t.Amount));
     }
 
@@ -89,7 +94,7 @@ public class TransactionService
             .Include(t => t.User)
             .Where(t => t.GroupId == groupId && t.Month == month && t.Type == "expense")
             .ToListAsync();
-        return txs.GroupBy(t => string.IsNullOrWhiteSpace(t.User.DisplayName) ? t.User.Email ?? "Ẩn danh" : t.User.DisplayName)
+        return txs.GroupBy(t => DisplayNameOf(t.User))
                   .ToDictionary(g => g.Key, g => g.Sum(t => t.Amount));
     }
 

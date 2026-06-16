@@ -218,7 +218,25 @@ app.UseRouting();
 app.UseCors();
 app.Use(async (context, next) =>
 {
-    await next();
+    try
+    {
+        await next();
+    }
+    catch (Exception ex) when (context.Request.Path.StartsWithSegments("/api"))
+    {
+        var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "Unhandled API error for {Path}", context.Request.Path);
+
+        if (!context.Response.HasStarted)
+        {
+            context.Response.Clear();
+            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+            context.Response.ContentType = "application/json; charset=utf-8";
+            await context.Response.WriteAsync("""{"message":"Server error"}""");
+        }
+
+        return;
+    }
 
     if (!context.Request.Path.StartsWithSegments("/api") || !IsRedirectStatus(context.Response.StatusCode))
     {
@@ -676,27 +694,29 @@ api.MapGet("/app", async (
         .ToDictionary(g => g.Key, g => g.Sum(t => t.Amount));
     var allByMember = allTransactions
         .Where(t => t.Type == "expense")
-        .GroupBy(t => string.IsNullOrWhiteSpace(t.User.DisplayName) ? t.User.Email ?? "An danh" : t.User.DisplayName)
+        .GroupBy(t => DisplayNameOf(t.User, "An danh"))
         .ToDictionary(g => g.Key, g => g.Sum(t => t.Amount));
     var budgetTotal = await db.Budgets
         .Where(b => groupIds.Contains(b.GroupId) && b.Month == monthKey)
         .SumAsync(b => b.Amount);
     var notifications = await notificationService.GetUserNotifAsync(userId, 10);
-    var locationShares = await db.UserLocationShares
+    var rawLocationShares = await db.UserLocationShares
         .Include(l => l.User)
         .Where(l => l.GroupId == group.Id && l.IsSharing)
         .OrderByDescending(l => l.UpdatedAt)
+        .ToListAsync();
+    var locationShares = rawLocationShares
         .Select(l => new LocationShareResponse(
             l.UserId,
-            string.IsNullOrWhiteSpace(l.User.DisplayName) ? l.User.Email ?? "Thanh vien" : l.User.DisplayName,
-            l.User.Email ?? "",
+            DisplayNameOf(l.User, "Thanh vien"),
+            l.User?.Email ?? "",
             l.Latitude,
             l.Longitude,
             l.Accuracy,
             l.Label,
             l.UpdatedAt,
             l.UserId == userId))
-        .ToListAsync();
+        .ToList();
 
     var transactions = await txService.GetVisibleByGroupMonthAsync(group.Id, monthKey, userId);
     var budgets = await budgetService.GetByGroupMonthAsync(group.Id, monthKey);
@@ -721,8 +741,8 @@ api.MapGet("/app", async (
         groups.Select(g => new GroupResponse(g.Id, g.Name, g.Description, g.InviteCode)).ToList(),
         group.Members.Select(m => new MemberResponse(
             m.UserId,
-            m.User.DisplayName,
-            m.User.Email ?? "",
+            DisplayNameOf(m.User, "Thanh vien"),
+            m.User?.Email ?? "",
             m.Role,
             transactions.Where(t => t.UserId == m.UserId && t.Type == "expense").Sum(t => t.Amount))).ToList(),
         transactions.Select(ToTransactionResponse).ToList(),
@@ -735,9 +755,9 @@ api.MapGet("/app", async (
         debts.Select(d => new DebtResponse(
             d.Id,
             d.DebtorId,
-            d.Debtor.DisplayName,
+            DisplayNameOf(d.Debtor, "Thanh vien"),
             d.CreditorId,
-            d.Creditor.DisplayName,
+            DisplayNameOf(d.Creditor, "Thanh vien"),
             d.Amount,
             d.Note,
             d.CreatedAt)).ToList(),
@@ -1281,6 +1301,11 @@ static string GetCurrentUserId(HttpContext http)
 
 static string NormalizeMonth(string? month)
     => string.IsNullOrWhiteSpace(month) ? DateTime.Now.ToString("yyyy-MM", CultureInfo.InvariantCulture) : month;
+
+static string DisplayNameOf(AppUser? user, string fallback)
+    => string.IsNullOrWhiteSpace(user?.DisplayName)
+        ? user?.Email ?? fallback
+        : user.DisplayName;
 
 static async Task<SharedFund> GetOrCreateSharedFundAsync(AppDbContext db, int groupId)
 {
