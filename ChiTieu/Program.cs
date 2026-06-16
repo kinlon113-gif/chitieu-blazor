@@ -650,6 +650,7 @@ api.MapGet("/app", async (
     SplitBillService splitService,
     NotificationService notificationService,
     AppDbContext db,
+    ILogger<Program> logger,
     string? month,
     int? groupId) =>
 {
@@ -700,23 +701,31 @@ api.MapGet("/app", async (
         .Where(b => groupIds.Contains(b.GroupId) && b.Month == monthKey)
         .SumAsync(b => b.Amount);
     var notifications = await notificationService.GetUserNotifAsync(userId, 10);
-    var rawLocationShares = await db.UserLocationShares
-        .Include(l => l.User)
-        .Where(l => l.GroupId == group.Id && l.IsSharing)
-        .OrderByDescending(l => l.UpdatedAt)
-        .ToListAsync();
-    var locationShares = rawLocationShares
-        .Select(l => new LocationShareResponse(
-            l.UserId,
-            DisplayNameOf(l.User, "Thanh vien"),
-            l.User?.Email ?? "",
-            l.Latitude,
-            l.Longitude,
-            l.Accuracy,
-            l.Label,
-            l.UpdatedAt,
-            l.UserId == userId))
-        .ToList();
+    var locationShares = new List<LocationShareResponse>();
+    try
+    {
+        var rawLocationShares = await db.UserLocationShares
+            .Include(l => l.User)
+            .Where(l => l.GroupId == group.Id && l.IsSharing)
+            .OrderByDescending(l => l.UpdatedAt)
+            .ToListAsync();
+        locationShares = rawLocationShares
+            .Select(l => new LocationShareResponse(
+                l.UserId,
+                DisplayNameOf(l.User, "Thanh vien"),
+                l.User?.Email ?? "",
+                l.Latitude,
+                l.Longitude,
+                l.Accuracy,
+                l.Label,
+                l.UpdatedAt,
+                l.UserId == userId))
+            .ToList();
+    }
+    catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+    {
+        logger.LogWarning(ex, "UserLocationShares table is missing; returning empty location shares.");
+    }
 
     var transactions = await txService.GetVisibleByGroupMonthAsync(group.Id, monthKey, userId);
     var budgets = await budgetService.GetByGroupMonthAsync(group.Id, monthKey);
