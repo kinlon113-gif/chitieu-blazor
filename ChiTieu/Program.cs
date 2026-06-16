@@ -216,6 +216,26 @@ app.Use(async (context, next) =>
 app.UseStaticFiles();
 app.UseRouting();
 app.UseCors();
+app.Use(async (context, next) =>
+{
+    await next();
+
+    if (!context.Request.Path.StartsWithSegments("/api") || !IsRedirectStatus(context.Response.StatusCode))
+    {
+        return;
+    }
+
+    var location = context.Response.Headers.Location.ToString();
+    var isAccessDenied = location.Contains("AccessDenied", StringComparison.OrdinalIgnoreCase);
+    context.Response.Clear();
+    context.Response.StatusCode = isAccessDenied
+        ? StatusCodes.Status403Forbidden
+        : StatusCodes.Status401Unauthorized;
+    context.Response.ContentType = "application/json; charset=utf-8";
+    await context.Response.WriteAsync(isAccessDenied
+        ? """{"message":"Forbidden"}"""
+        : """{"message":"Unauthorized"}""");
+});
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -277,6 +297,13 @@ static bool IsLocalReturnUrl(string? returnUrl)
         && returnUrl.StartsWith('/')
         && !returnUrl.StartsWith("//")
         && !returnUrl.StartsWith("/api", StringComparison.OrdinalIgnoreCase);
+
+static bool IsRedirectStatus(int statusCode)
+    => statusCode is StatusCodes.Status301MovedPermanently
+        or StatusCodes.Status302Found
+        or StatusCodes.Status303SeeOther
+        or StatusCodes.Status307TemporaryRedirect
+        or StatusCodes.Status308PermanentRedirect;
 
 static string AuthStatusMessage(string? error, string? external)
 {
