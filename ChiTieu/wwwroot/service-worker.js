@@ -1,4 +1,4 @@
-const CACHE_NAME = "chitieu-shell-v4";
+const CACHE_NAME = "chitieu-shell-v5";
 const SHELL_ASSETS = [
   "/css/app.css",
   "/js/location.js",
@@ -11,7 +11,9 @@ const SHELL_ASSETS = [
 
 self.addEventListener("install", event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(SHELL_ASSETS))
+    caches.open(CACHE_NAME).then(cache =>
+      Promise.allSettled(SHELL_ASSETS.map(asset => cache.add(asset)))
+    )
   );
   self.skipWaiting();
 });
@@ -35,15 +37,26 @@ self.addEventListener("fetch", event => {
   if (url.pathname.startsWith("/api") || url.pathname.startsWith("/_blazor")) return;
   if (request.mode === "navigate" || request.destination === "document") return;
   if (url.pathname.startsWith("/account")) return;
+  if (!shouldCache(url.pathname)) return;
 
   event.respondWith(
-    fetch(request)
-      .then(response => {
+    (async () => {
+      try {
+        const response = await fetch(request);
         if (!response || !response.ok) return response;
         const copy = response.clone();
         caches.open(CACHE_NAME).then(cache => cache.put(request, copy)).catch(() => {});
         return response;
-      })
-      .catch(() => caches.match(request))
+      } catch {
+        const cached = await caches.match(request);
+        return cached || Response.error();
+      }
+    })()
   );
 });
+
+function shouldCache(pathname) {
+  return SHELL_ASSETS.includes(pathname)
+    || pathname.startsWith("/react/assets/")
+    || pathname.startsWith("/icons/");
+}
